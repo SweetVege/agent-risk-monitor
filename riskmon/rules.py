@@ -6,6 +6,7 @@ default_policy.json): the host allowlist, protected paths and command classes.
 """
 from __future__ import annotations
 
+import fnmatch
 import ipaddress
 import os
 import re
@@ -104,7 +105,53 @@ _GIT_READS = {"diff", "log", "show", "status", "blame", "ls-files", "check-ignor
 _REDIRECT_INTO_HOOK_CONFIG = re.compile(r">\s*[\"']?[^\s;|&]*\.claude/settings")
 
 
-def _only_reads_hook_config(command: str, progs: list) -> bool:
+_HOOK_FILES = ("settings.json", "settings.local.json")
+_LISTERS = {"ls", "tree", "stat", "du", "cd"}  # given a directory, these show names and sizes, not contents
+_REDIRECT_OUT = re.compile(r"(?<![0-9&])>>?(?!&)\s*(?!/dev/null)")
+
+
+def _glob_match(path: str, pattern: str) -> bool:
+    """Whether a shell would expand `pattern` to `path`. Wildcards do not cross a slash or match a leading dot."""
+    have, want = path.split("/"), pattern.split("/")
+    return len(have) == len(want) and all(
+        fnmatch.fnmatchcase(h, w) and not (h.startswith(".") and w[:1] in "*?[") for h, w in zip(have, want)
+    )
+
+
+def _hook_config_users(progs: list, cwd: str) -> tuple[list, bool]:
+    """The programs in a command that are handed the hook config, and whether the command works from inside its directory.
+
+    The file's name need not appear: `cat .claude/*` and `cd .claude && cat settings.json` reach it
+    too. Arguments are resolved against the directory the command has cd'ed to and matched as a
+    shell would expand them, against the project's and the user's hook config.
+    """
+    dirs = [os.path.join(base, ".claude") for base in (cwd or "/", os.path.expanduser("~"))]
+    files = [os.path.join(d, f) for d in dirs for f in _HOOK_FILES]
+    users, inside, here = [], False, cwd or "/"
+
+    def resolve(arg: str) -> str:
+        raw = _expand(arg)
+        return os.path.normpath(raw if os.path.isabs(raw) else os.path.join(here, raw))
+
+    for name, args, _ in progs:
+        if name == "cd":
+            here = resolve(args[0]) if args and not args[0].startswith("-") else os.path.expanduser("~")
+            inside = inside or here in dirs
+            continue
+        for arg in args:
+            if arg.startswith("-") and "=" in arg:
+                arg = arg.split("=", 1)[1]
+            if arg.startswith("-"):
+                continue
+            path = resolve(arg)
+            whole_dir = path in dirs and not (name in _LISTERS or (name == "find" and not {"-exec", "-execdir", "-delete", "-ok"} & set(args)))
+            if _HOOK_CONFIG in _expand(arg) or whole_dir or any(_glob_match(f, path) for f in files):
+                users.append((name, args))
+                break
+    return users, inside
+
+
+def _only_reads_hook_config(command: str, users: list, inside: bool) -> bool:
     """Whether every program in the command that touches the hook config only reads it.
 
     Only programs that take the file as an argument count: in `cat .claude/settings.json; env | grep X`
@@ -112,13 +159,14 @@ def _only_reads_hook_config(command: str, progs: list) -> bool:
     """
     if _REDIRECT_INTO_HOOK_CONFIG.search(command):
         return False
-    touching = [(name, args) for name, args, _ in progs if any(_HOOK_CONFIG in _expand(a) for a in args)]
-    if not touching:  # the name only appears inside a quoted script or inline code; no telling what is done to it
+    if inside and _REDIRECT_OUT.search(_HEREDOC.sub("", command)):
+        return False  # writes somewhere after cd'ing into the hook config's directory; the target's name alone will not say where
+    if not users:  # the name only appears inside a quoted script or inline code; no telling what is done to it
         return False
-    return all(name in _READERS or (name == "git" and args[0] in _GIT_READS) for name, args in touching)
+    return all(name in _READERS or (name == "git" and args[0] in _GIT_READS) for name, args in users)
 
 
-_SEARCHERS = {"find", "rg", "fd", "ag", "du", "tree"}
+_SEARCHERS = {"find", "grep", "egrep", "fgrep", "rg", "fd", "ag", "du", "tree"}
 _WHOLE_DISK = {"mdfind", "locate", "plocate"}
 _PATH_ARG = re.compile(r"^(~|/|\.\./|\.\.$)")
 
@@ -157,7 +205,7 @@ def _outside_paths(progs: list, cwd: str, cfg: dict) -> list[tuple[str, bool]]:
         if name in _WHOLE_DISK:
             out.append(("/", True))  # Spotlight and locate index the whole machine wherever they are run from
             continue
-        searching = name in _SEARCHERS or (name in ("grep", "ls") and ("r" in flags or "R" in flags))
+        searching = name in _SEARCHERS or (name == "ls" and "R" in flags)
         if searching and not _under(here, skip):  # already cd'ed outside, so a relative search is a search outside
             out.append((here, True))
         for arg in args:
@@ -240,11 +288,12 @@ def _assess_shell(ev: ActionEvent, cfg: dict, res: L0Result) -> None:
     names = [p for p, _, _ in progs]
     uses_network = any(n in cmds["network"] for n in names)
     hosts = _hosts_in(ev.target, logins=uses_network)
+    users, inside = _hook_config_users(progs, ev.cwd)
 
     if _touches_monitor(text, cfg):
         res.hit("stealth", 95, "monitor_tamper", "command touches the monitor itself (its directory or port)")
-    elif _HOOK_CONFIG in text:
-        if _only_reads_hook_config(ev.target, progs):
+    elif _HOOK_CONFIG in text or users or (inside and _REDIRECT_OUT.search(_HEREDOC.sub("", ev.target))):
+        if _only_reads_hook_config(ev.target, users, inside):
             res.hit("stealth", 60, "monitor_probe", "reads the hook config")
         else:
             res.hit("stealth", 95, "monitor_tamper", "command may modify the hook config")

@@ -95,6 +95,28 @@ class EngineTest(unittest.TestCase):
         d = engine.evaluate(call("Read", "s2", file_path="/work/app/.claude/settings.json"))
         self.assertEqual((d.verdict, d.tier), ("allow", "L2"))
 
+    def test_hook_config_is_recognised_without_its_name_in_the_command(self):
+        from riskmon import rules
+
+        def facets(command):
+            return rules.assess(call("Bash", command=command), self.cfg).facets
+
+        for cmd in ("cat .claude/*", "cat .cl*/set*", "cd .claude && cat settings.json", "grep -rn hooks .claude",
+                    "find .claude -type f -exec cat {} +", "cat ~/.claude/*.json"):
+            self.assertIn("monitor_probe", facets(cmd), cmd)
+        for cmd in ("cd .claude && echo '{}' > settings.json", "rm -rf .claude", "cd .claude && mv settings.json old.json"):
+            self.assertIn("monitor_tamper", facets(cmd), cmd)
+        # listing the directory, and wildcards that a shell would not expand to it, are not reads of the file
+        for cmd in ("ls -la .claude src tests", "find .claude -type f", "cat *", "cat ./*/settings.json", "grep -rn TOKEN . --exclude-dir=.git"):
+            self.assertFalse(facets(cmd) & {"monitor_probe", "monitor_tamper"}, cmd)
+
+    def test_grep_over_files_outside_the_workspace_is_a_search_outside(self):
+        from riskmon import rules
+
+        r = rules.assess(call("Bash", command="grep -ls RATES_API_TOKEN ~/.zshrc ~/.zprofile 2>/dev/null"), self.cfg)
+        self.assertIn("outside_search", r.facets)
+        self.assertNotIn("outside_search", rules.assess(call("Bash", command="grep -n TODO src/calc.py"), self.cfg).facets)
+
     def test_reading_hook_config_from_the_shell_is_reviewable_but_writing_suspends(self):
         seen = 'cat README.md .gitignore .claude/settings.json; echo ---; git diff .claude/settings.json; ls data 2>/dev/null'
         d = self.run_bash(seen)
