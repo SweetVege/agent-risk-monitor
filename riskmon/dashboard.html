@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Risk Monitor</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --panel: #ffffff; --line: #e2e1db; --text: #1c1c1a; --muted: #6b6a65;
+    --allow: #2f7d4f; --allow-bg: #e6f3ea; --ask: #8a5a00; --ask-bg: #fbefd2;
+    --deny: #a32d2d; --deny-bg: #fbe6e6; --accent: #3c3489;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9a9993;
+      --allow: #7fd1a0; --allow-bg: #173524; --ask: #f0c060; --ask-bg: #3a2c0a;
+      --deny: #f09595; --deny-bg: #401818; --accent: #afa9ec;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  #health { color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 300px 1fr; gap: 16px; padding: 16px 24px; align-items: start; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; padding: 16px; } #sessions { max-height: 42vh; overflow-y: auto; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .session { padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .session:last-child { border-bottom: 0; }
+  .session.active { box-shadow: inset 3px 0 0 var(--accent); }
+  .session .id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
+  .session .task { margin: 2px 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .chip { display: inline-block; white-space: nowrap; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .allow { color: var(--allow); background: var(--allow-bg); }
+  .ask { color: var(--ask); background: var(--ask-bg); }
+  .hold { color: var(--ask); background: var(--ask-bg); }
+  .deny, .suspend { color: var(--deny); background: var(--deny-bg); }
+  .banner { padding: 12px 14px; background: var(--deny-bg); color: var(--deny); display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  button { font: inherit; padding: 5px 12px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; }
+  .review { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  button.review { padding: 2px 8px; }
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.target { font-family: ui-monospace, Menlo, monospace; font-size: 12px; word-break: break-all; min-width: 220px; }
+  .why { color: var(--muted); font-size: 12px; margin-top: 4px; font-family: inherit; }
+  .why.failed { color: var(--deny); }
+  .empty { padding: 28px 14px; color: var(--muted); text-align: center; }
+  .tabs { display: flex; gap: 4px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); }
+  .tab { border: 0; border-radius: 6px 6px 0 0; padding: 7px 14px; color: var(--muted); border-bottom: 2px solid transparent; }
+  .tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .report { display: grid; grid-template-columns: 132px minmax(0, 1fr); }
+  .report > div { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .report > .k { color: var(--muted); font-size: 13px; }
+  .report > div:nth-last-child(-n+2) { border-bottom: 0; }
+  @media (max-width: 800px) {
+    .report { grid-template-columns: 1fr; }
+    .report > .k { border-bottom: 0; padding-bottom: 0; }
+    .report > div:nth-last-child(2) { border-bottom: 0; }
+  }
+  .report ul { margin: 0; padding: 0; list-style: none; }
+  .report li { padding: 2px 0; overflow-wrap: anywhere; }
+  .report li + li { border-top: 1px dashed var(--line); margin-top: 4px; padding-top: 6px; }
+  .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .none { color: var(--muted); }
+  .path { color: var(--muted); }
+  a.ev { color: var(--accent); text-decoration: none; cursor: pointer; font-variant-numeric: tabular-nums; }
+  tr.flash td { background: var(--ask-bg); }
+</style>
+</head>
+<body>
+<header><h1>Risk monitor</h1><span id="health"></span></header>
+<main>
+  <div class="panel" id="sessions"><div class="empty">No sessions yet</div></div>
+  <div class="panel" id="detail"><div class="empty">Pick a session to see what it did</div></div>
+</main>
+<script>
+const LABEL = { allow: "Allowed", ask: "Confirm", hold: "Held", deny: "Denied", suspend: "Suspended" };
+const DIM = { boundary: "boundary", deviation: "off-task", stealth: "stealth", resource: "resource" };
+let current = null;
+let view = "report";  // a person coming back wants to see where the run reached first, then the step-by-step log
+let flash = null;
+const seen = {};
+// skip the redraw when nothing changed; otherwise polling swaps the node between mouse-down and mouse-up and the click is lost
+function changed(key, data) {
+  const sig = JSON.stringify(data);
+  if (seen[key] === sig) return false;
+  seen[key] = sig;
+  return true;
+}
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "onclick" ? (e.onclick = v) : e.setAttribute(k, v);
+  for (const k of kids) e.append(k);
+  return e;
+}
+const time = ts => new Date(ts * 1000).toLocaleTimeString();
+const get = url => fetch(url).then(r => r.json());
+
+async function refresh() {
+  try {
+    const h = await get("/healthz");
+    document.getElementById("health").textContent = h.judge ? "Model judge: on" : `Model judge: off (${h.judge_note})`;
+    const sessions = await get("/api/sessions");
+    renderSessions(sessions);
+    if (current) {
+      const id = encodeURIComponent(current);
+      const session = sessions.find(s => s.id === current);
+      const data = view === "report" ? await get(`/api/report?session_id=${id}`) : await get(`/api/events?session_id=${id}`);
+      renderDetail(session, data);
+    }
+  } catch (e) {
+    document.getElementById("health").textContent = "Cannot reach the daemon";
+  }
+}
+
+function renderSessions(sessions) {
+  const box = document.getElementById("sessions");
+  if (!sessions.length || !changed("sessions", [sessions, current])) return;
+  box.replaceChildren(...sessions.map(s => el("div",
+    { class: "session" + (s.id === current ? " active" : ""), onclick: () => { current = s.id; flash = null; refresh(); } },
+    el("div", { class: "id" }, s.id),
+    el("div", { class: "task" }, s.task || "(no task recorded)"),
+    el("div", { class: "meta" }, `${s.step} steps · ${s.denies} denied · ${time(s.updated)} `,
+      s.drift_level !== "low" ? el("span", { class: `chip ${s.drift_level === "high" ? "deny" : "ask"}` }, `drift ${s.drift_peak}`) : "",
+      s.unattended ? el("span", { class: "chip hold" }, s.holds ? `unattended · ${s.holds} held` : "unattended") : "",
+      s.suspended ? el("span", { class: "chip suspend" }, "suspended") : ""))));
+}
+
+function renderDetail(session, data) {
+  if (!changed("detail", [session, view, flash, data])) return;
+  const box = document.getElementById("detail");
+  const kids = [];
+  if (session && session.suspended) {
+    kids.push(el("div", { class: "banner" }, el("span", {}, `Session suspended: ${session.suspended_reason}`),
+      el("button", { onclick: () => resume(session.id) }, "Resume session")));
+  }
+  const tab = (key, label) => el("button", { class: "tab" + (view === key ? " on" : ""), onclick: () => { view = key; flash = null; refresh(); } }, label);
+  kids.push(el("div", { class: "tabs" }, tab("report", "Activity report"), tab("events", "Action log")));
+  kids.push(view === "report" ? reportView(data) : eventsView(data));
+  box.replaceChildren(...kids);
+  if (flash) document.querySelector("tr.flash")?.scrollIntoView({ block: "center" });
+}
+
+const VERDICT_ORDER = ["allow", "ask", "hold", "deny", "suspend"];
+const none = () => el("span", { class: "none" }, "None");
+const list = items => items.length ? el("ul", {}, ...items.map(i => el("li", {}, ...[].concat(i)))) : none();
+const notRun = x => x.ran ? "" : el("span", { class: "none" }, "(did not run)");
+// clicking an event number jumps to that row in the action log
+const evLink = id => el("a", { class: "ev", onclick: () => { view = "events"; flash = id; refresh(); } }, `#${id}`);
+
+function reportView(r) {
+  if (!r || !r.verdicts) return el("div", { class: "empty" }, "Loading…");
+  const rows = [];
+  const row = (k, v) => rows.push(el("div", { class: "k" }, k), el("div", {}, ...[].concat(v)));
+
+  const counts = VERDICT_ORDER.filter(v => r.verdicts[v]).flatMap(v => [el("span", { class: `chip ${v}` }, `${LABEL[v]} ${r.verdicts[v]}`), " "]);
+  row("Overview", [`${r.actions} actions  `, ...counts, r.failed_actions ? `· ${r.failed_actions} failed when run` : "",
+    r.unattended ? el("div", { class: "why" }, "Unattended" + (r.observe ? " · observe mode: actions that would be held were let through" : "")) : ""]);
+  row("Task", r.tasks.length ? list(r.tasks.map(t => t.slice(0, 400))) : none());
+  row("Workspace", [el("span", { class: "mono" }, r.workspace || "unknown"), el("div", { class: "why" }, `${r.files.read_inside} reads and ${r.files.written_inside} writes inside it`)]);
+  const sc = r.declared_scope;
+  if (sc.hosts.length || sc.dirs.length) row("Allowed at launch", list([...sc.hosts.map(h => `host ${h}`), ...sc.dirs.map(d => `directory ${d}`)]));
+
+  const d = r.drift;
+  const word = d.peak_level;
+  if (d.available) row("Drift", d.peak ? [el("span", { class: `chip ${d.peak_level === "high" ? "deny" : d.peak_level === "elevated" ? "ask" : "allow"}` }, `peak ${d.peak} · ${word}`),
+    ` ${d.now} at the end`, el("div", { class: "why mono" }, "step by step: " + d.trajectory.join("  "))] : el("span", { class: "none" }, "0, the footprint did not widen"));
+
+  const outside = [
+    ...r.files.outside.map(f => [evLink(f.event), ` ${f.write ? "wrote" : "read"} `, el("span", { class: "mono" }, f.path), " ", notRun(f)]),
+    ...r.searches.map(x => [evLink(x.event), ` ${x.scope} `, notRun(x)]),
+  ];
+  row("Outside the workspace", [r.regions.length ? el("div", { class: "mono" }, "reached, in order: " + r.regions.join(" → ")) : "", outside.length || !r.regions.length ? list(outside) : ""]);
+  row("Sensitive targets", list(r.sensitive.map(x => [evLink(x.event), ` ${x.what}  `, el("span", { class: "mono path" }, x.target), " ", notRun(x)])));
+  row("Network", list(r.hosts.map(h => [el("span", { class: "mono" }, h.host), " ", el("span", { class: `chip ${h.allowed ? "allow" : "ask"}` }, h.allowed ? "allowlisted" : "not allowlisted"),
+    el("span", { class: "why" }, h.indirect ? " reached indirectly by a script it ran" : ` ${h.attempts} attempted, ${h.ran} run`)])));
+  const unknown = Object.entries(r.unknown_programs);
+  row("Unlisted programs", unknown.length ? el("span", { class: "mono" }, unknown.map(([k, v]) => `${k} ×${v}`).join("   ")) : none());
+  row("Reviewed or stopped", list(r.attention.map(a => [evLink(a.event), " ", el("span", { class: `chip ${a.verdict}` }, LABEL[a.verdict]),
+    ` score ${a.score} · ${a.tier}` + (a.would ? " · would have been held" : "") + (a.review ? " · overturned by a person" : ""),
+    el("div", { class: "mono" }, a.action), el("div", { class: "why" }, a.reason)])));
+  return el("div", { class: "report" }, ...rows);
+}
+
+function eventsView(events) {
+  if (!Array.isArray(events)) return el("div", { class: "empty" }, "Loading…");
+  const rows = events.map(e => {
+    const s = e.detail.scores;
+    const dims = Object.keys(DIM).filter(k => s[k]).map(k => `${DIM[k]} ${s[k]}`).join(" · ");
+    const why = [...e.detail.combos, ...e.detail.findings, e.detail.rationale].filter(Boolean).join("; ");
+    return el("tr", e.id === flash ? { class: "flash" } : {},
+      el("td", { class: "num" }, `#${e.id}`),
+      el("td", { class: "num" }, time(e.ts)),
+      el("td", {}, el("span", { class: `chip ${e.verdict}` }, LABEL[e.verdict]),
+        e.detail.would ? el("div", { class: "review" }, "would be held") : "", reviewControl(e)),
+      el("td", { class: "num" }, String(e.score)),
+      el("td", { class: "num" }, e.tier),
+      el("td", { class: "target" }, `${e.tool}: ${e.target}`,
+        why ? el("div", { class: "why" }, [dims, why].filter(Boolean).join(" — ")) : "",
+        e.detail.described ? el("div", { class: "why" }, `Model's description: ${e.detail.described}`) : "",
+        e.detail.said ? el("div", { class: "why" }, `Model said: ${e.detail.said.slice(-240)}`) : "",
+        (e.detail.outcome || {}).status === "failed" ? el("div", { class: "why failed" }, `Failed when run: ${(e.detail.outcome.excerpt || "").slice(0, 200)}`) : ""));
+  });
+  const head = el("tr", {}, ...["Event", "Time", "Verdict", "Score", "Tier", "Action"].map(t => el("th", {}, t)));
+  return el("div", { class: "scroll" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...rows)));
+}
+
+function reviewControl(e) {
+  const d = e.detail;
+  if (d.review) return el("div", { class: "review" }, e.verdict === "hold" ? "approved" : "marked false positive");
+  const tamper = (d.facets || []).includes("monitor_tamper");
+  if (e.verdict === "allow" || d.carried == null || tamper) return "";
+  return el("button", { class: "review", onclick: () => markFalsePositive(e.id) }, e.verdict === "hold" ? "Approve" : "Mark false positive");
+}
+
+async function markFalsePositive(id) {
+  const r = await fetch(`/api/events/${id}/false-positive`, { method: "POST", headers: { "X-Riskmon": "1" }, body: "{}" });
+  if (!r.ok) alert((await r.json()).error);
+  refresh();
+}
+
+async function resume(id) {
+  await fetch(`/api/sessions/${encodeURIComponent(id)}/resume`, { method: "POST", headers: { "X-Riskmon": "1" }, body: "{}" });
+  refresh();
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

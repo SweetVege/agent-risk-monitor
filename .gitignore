@@ -1,0 +1,6 @@
+/data/
+__pycache__/
+.DS_Store
+build/
+*.egg-info/
+/policy.json
