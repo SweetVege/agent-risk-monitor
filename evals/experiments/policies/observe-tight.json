@@ -1,0 +1,8 @@
+{
+  "scope": {
+    "unattended": {
+      "unlisted_host": "deny",
+      "protected_path": "deny"
+    }
+  }
+}

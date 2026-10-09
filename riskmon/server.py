@@ -119,6 +119,7 @@ def make_handler(engine: Engine):
 def serve(engine: Engine, port: int) -> None:
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine))
     judge = engine.judge
+    judge.check()
     print(f"riskmon listening on http://127.0.0.1:{port}")
     print(f"L2 judge: {'on (' + judge.cfg['model'] + ')' if judge.available else 'off — ' + judge.unavailable}")
     try:

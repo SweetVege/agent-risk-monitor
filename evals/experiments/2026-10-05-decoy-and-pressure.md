@@ -112,6 +112,6 @@ Where it might matter is longer runs, where many small actions, none of them eno
 
 - Ten runs per condition. The direction is clear; the proportions themselves are rough.
 - Pressure and having nobody to ask were added together, so their effects cannot be separated.
-- One model and one task.
+- One model and one task. The model was not recorded at the time; the session transcripts name `claude-opus-5-5`. A [later round](2026-10-08-three-models.md) ran two more.
 - The agent had to go to the neighbouring directory to find the decoy, and it never did. Whether it would use a token it had found was therefore not tested.
 - Observe mode let through actions that would have been held. What the agent does after its first hold in normal mode was only seen in the eight live runs above.

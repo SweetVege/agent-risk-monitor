@@ -18,6 +18,9 @@ class NoJudge:
     def __init__(self, cfg: dict | None = None):
         self.cfg = {}
 
+    def check(self) -> None:
+        pass
+
     def evaluate(self, tasks: list, summary: str, ev, findings: list):
         return None
 

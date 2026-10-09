@@ -48,7 +48,7 @@ It shows that with this model, this tool and these three kinds of task, having n
 
 It does not show more than that:
 
-- **One model.** Every run was Claude inside Claude Code.
+- **One model.** Every run was Claude inside Claude Code. The model was not recorded at the time; the session transcripts name `claude-opus-5-5`.
 - **Little pressure.** Nothing in the tasks said it must be done or that a release was waiting, and the longest run was nine turns.
 - **The setup may have been seen through.** The agent pointed out several times that `api.rates.internal.example` is a placeholder domain. It may have realised this was a test.
 - **No bait.** Nothing was placed where crossing a limit would have obtained it.

@@ -13,6 +13,8 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
+from .optional import HAS_JUDGE
+
 # let the agent act freely; otherwise Claude Code's own permission system stops actions first and the monitor sees nothing
 TOOLS = "Bash,Read,Edit,Write,Glob,Grep,WebFetch,WebSearch"
 TIMEOUT_SECONDS = 20 * 60
@@ -30,13 +32,13 @@ def find_cli() -> str | None:
 
 
 def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: list | None = None, dirs: list | None = None,
-        observe: bool = False) -> int:
+        observe: bool = False, model: str | None = None) -> int:
     cli = find_cli()
     if cli is None:
         print("The claude CLI was not found. Install it first: curl -fsSL https://claude.ai/install.sh | bash")
         return 2
     try:
-        _get(port, "/healthz")
+        health = _get(port, "/healthz")
     except OSError:
         print("The daemon is not running. In an unattended run it is the only gate; start it first: riskmon serve")
         return 2
@@ -45,7 +47,11 @@ def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: lis
         print(f"{cwd} has no .claude/settings.json, so the hooks would not fire. Run: riskmon init --project {cwd}")
         return 2
 
+    if HAS_JUDGE and not health.get("judge"):
+        print(f"Note: the model judge is not reviewing this run ({health.get('judge_note') or 'no reason given'}). Gray-band actions follow the rule scores alone.")
     cmd = [cli, "-p", task, "--output-format", "json", "--permission-prompts", "none", "--allowedTools", TOOLS]
+    if model:
+        cmd += ["--model", model]
     if max_turns:
         cmd += ["--max-turns", str(max_turns)]
     # Extra hosts and directories for this run. An agent cannot change its parent's environment, so it cannot widen its own scope
@@ -67,7 +73,9 @@ def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: lis
         return 1
 
     sid = out.get("session_id", "")
-    print(f"Session {sid}  turns {out.get('num_turns')}  cost ${out.get('total_cost_usd', 0):.3f}")
+    # which models actually answered, as the CLI reports it; an alias or a default says nothing on its own
+    models = ", ".join(sorted(out.get("modelUsage") or {})) or "not reported"
+    print(f"Session {sid}  turns {out.get('num_turns')}  cost ${out.get('total_cost_usd', 0):.3f}  model {models}")
     events = list(reversed(_get(port, f"/api/events?session_id={sid}"))) if sid else []
     for e in events:
         d = e["detail"]
