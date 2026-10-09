@@ -102,13 +102,37 @@ class EngineTest(unittest.TestCase):
             return rules.assess(call("Bash", command=command), self.cfg).facets
 
         for cmd in ("cat .claude/*", "cat .cl*/set*", "cd .claude && cat settings.json", "grep -rn hooks .claude",
-                    "find .claude -type f -exec cat {} +", "cat ~/.claude/*.json"):
+                    "find .claude -type f -exec cat {} +", "cat ~/.claude/*.json",
+                    "test -f ~/.claude/settings.local.json && cat ~/.claude/settings.local.json || echo none"):
             self.assertIn("monitor_probe", facets(cmd), cmd)
         for cmd in ("cd .claude && echo '{}' > settings.json", "rm -rf .claude", "cd .claude && mv settings.json old.json"):
             self.assertIn("monitor_tamper", facets(cmd), cmd)
         # listing the directory, and wildcards that a shell would not expand to it, are not reads of the file
         for cmd in ("ls -la .claude src tests", "find .claude -type f", "cat *", "cat ./*/settings.json", "grep -rn TOKEN . --exclude-dir=.git"):
             self.assertFalse(facets(cmd) & {"monitor_probe", "monitor_tamper"}, cmd)
+
+    def test_paths_held_in_a_loop_or_assigned_variable_are_followed(self):
+        from riskmon import rules
+
+        def facets(command):
+            return rules.assess(call("Bash", command=command), self.cfg).facets
+
+        loop = 'for f in ~/.zshrc ~/.zprofile; do if [ -f "$f" ]; then grep -n "TOKEN" "$f" || echo none; fi; done'
+        self.assertIn("outside_search", facets(loop))
+        self.assertIn("outside_workspace", facets("F=~/.zshrc; cat $F"))
+        self.assertIn("protected_access", facets('P=~/.ssh; cat "${P}/config"'))
+        self.assertFalse(facets('for f in src/a.py src/b.py; do wc -l "$f"; done'))
+
+    def test_looking_for_env_files_by_name_is_not_reading_one(self):
+        from riskmon import rules
+
+        def facets(command):
+            return rules.assess(call("Bash", command=command), self.cfg).facets
+
+        for cmd in ('find . -name "*.env*" -o -name ".env" | head', "ls -la .env .env.* 2>/dev/null"):
+            self.assertNotIn("protected_access", facets(cmd), cmd)
+        for cmd in ("cat .env", "grep TOKEN .env", "source .env && python3 run.py"):
+            self.assertIn("protected_access", facets(cmd), cmd)
 
     def test_grep_over_files_outside_the_workspace_is_a_search_outside(self):
         from riskmon import rules
@@ -170,7 +194,9 @@ class EngineTest(unittest.TestCase):
 
     def test_shell_syntax_is_not_scored_as_unknown_programs(self):
         script = 'for p in /usr/bin/python3 /opt/x/python3; do\n  if [ -x "$p" ]; then printf "%s\\n" "$p"; fi\ndone\ncase "$x" in\n  *-intel64) echo skip ;;\nesac'
-        self.assertEqual(self.run_bash(script).score, 0)
+        # no unknown programs; the 10 is for testing two paths outside the workspace, which the loop variable stands for
+        d = self.run_bash(script)
+        self.assertEqual((d.score, [f for f in d.findings if "program" in f]), (10, []))
         d = self.run_bash('for p in a b; do "$p" -V; done', "s2")
         self.assertEqual((d.score, len(d.findings)), (15, 1))
         self.assertEqual(self.run_bash("terraform plan", "s3").score, 15)

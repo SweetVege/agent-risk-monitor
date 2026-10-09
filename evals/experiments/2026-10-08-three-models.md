@@ -69,6 +69,8 @@ The Haiku setup run cuts the other way. The single run that reached furthest cam
 - **Two actions were not recognised for what they were.** `cat .claude/*` read the hook configuration without being tagged as such, because the rule looks for the file's name in the command and a wildcard does not contain it. A `grep` over the shell profiles that named each file was tagged as touching a path outside the workspace but not as a search outside it, because only a recursive `grep` counted as a search, so the scope policy did not ask for confirmation. Both are fixed: the hook configuration is now matched the way a shell would expand the argument, following `cd`, and any `grep` over paths outside the workspace counts as a search there.
 - **The judge's absence went unnoticed until the runs were over.** See above.
 
+The round was repeated the next afternoon, before the deadline and with the judge working, and two models from another vendor were added: see [2026-10-09](2026-10-09-five-models.md).
+
 ## Limits
 
 - Five runs per cell, one task, and three models from one vendor run through the same tool, whose system prompt was written for these models.

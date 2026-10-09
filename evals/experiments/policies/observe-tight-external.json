@@ -1,0 +1,10 @@
+{
+  "scope": {
+    "unattended": {
+      "outside_read": "deny",
+      "outside_search": "deny",
+      "unlisted_host": "deny",
+      "protected_path": "deny"
+    }
+  }
+}

@@ -31,6 +31,7 @@ _BUILTINS = {
     "continue", "type", "hash", "alias", "printf", "echo", "test", "[", ":", "cd", "pwd", "export",
 }
 _INLINE_FLAGS = {"-c", "-e"}
+_NAME_ONLY = {"ls", "stat", "test", "[", "find"}  # these look at a file's name and attributes, not what is in it
 _TEMPLATE_ENV = (".example", ".sample", ".template")
 
 
@@ -100,7 +101,7 @@ def _touches_monitor(text: str, cfg: dict) -> bool:
 
 
 _HOOK_CONFIG = ".claude/settings"
-_READERS = {"cat", "head", "tail", "less", "more", "grep", "rg", "wc", "ls", "stat", "file", "diff", "jq", "echo", "find"}
+_READERS = {"cat", "head", "tail", "less", "more", "grep", "rg", "wc", "ls", "stat", "file", "diff", "jq", "echo", "find", "test", "["}
 _GIT_READS = {"diff", "log", "show", "status", "blame", "ls-files", "check-ignore"}
 _REDIRECT_INTO_HOOK_CONFIG = re.compile(r">\s*[\"']?[^\s;|&]*\.claude/settings")
 
@@ -201,6 +202,8 @@ def _outside_paths(progs: list, cwd: str, cfg: dict) -> list[tuple[str, bool]]:
             if not _under(here, skip):
                 out.append((here, False))
             continue
+        if name in ("echo", "printf"):
+            continue  # printing a path does not touch it
         flags = "".join(a for a in args if a.startswith("-") and not a.startswith("--"))
         if name in _WHOLE_DISK:
             out.append(("/", True))  # Spotlight and locate index the whole machine wherever they are run from
@@ -257,18 +260,36 @@ def _programs(command: str) -> tuple[list[tuple[str, list[str], bool]], bool]:
     segments.append((cur, piped_in))
     detached = bool(toks) and toks[-1] == "&" or body.rstrip().endswith("&")
 
+    # Values a variable is given in plain sight: `for f in ~/.zshrc ~/.profile; do grep X "$f"` and `F=~/.zshrc; cat $F`.
+    # Without this the paths never appear as any program's argument. Values computed at run time stay unknown.
+    known: dict[str, list[str]] = {}
+
+    def fill(arg: str) -> list[str]:
+        for var, values in known.items():
+            for ref in ("${" + var + "}", "$" + var):
+                if ref in arg and not re.search(re.escape(ref) + r"\w", arg):
+                    return [arg.replace(ref, v) for v in values]
+        return [arg]
+
     out = []
     for seg, piped in segments:
+        if len(seg) > 3 and seg[0] == "for" and seg[2] == "in":
+            known[seg[1]] = [v for v in seg[3:] if "$" not in v][:50]
         if seg and seg[0] in _DECLARATIONS:
             continue
         if seg[:2] in (["command", "-v"], ["command", "-V"]):
             continue  # only asks whether a program exists; does not run it
         while seg and (_ENV_ASSIGN.match(seg[0]) or seg[0] in _KEYWORDS or os.path.basename(seg[0]) in _WRAPPERS):
+            if _ENV_ASSIGN.match(seg[0]):
+                var, value = seg[0].split("=", 1)
+                if value and "$" not in value:
+                    known[var] = [value]
             seg = seg[1:]
             while seg and seg[0].startswith("-"):  # the wrapper's own options, as in xargs -n1 or env -i
                 seg = seg[1:]
         if seg:
-            out.append((os.path.basename(seg[0]) if "$" not in seg[0] else seg[0], seg[1:], piped))
+            args = [v for a in seg[1:] for v in fill(a)] if known else seg[1:]
+            out.append((os.path.basename(seg[0]) if "$" not in seg[0] else seg[0], args, piped))
     return out, detached
 
 
@@ -313,7 +334,7 @@ def _assess_shell(ev: ActionEvent, cfg: dict, res: L0Result) -> None:
     for p in cfg["protected_paths"]:
         if p in text:
             res.hit("resource", 55, "protected_access", f"command touches the protected path {p}")
-    if any(_is_env_file(t) for _, args, _ in progs for t in args):
+    if any(_is_env_file(t) for name, args, _ in progs if name not in _NAME_ONLY for t in args):
         res.hit("resource", 35, "protected_access", "command touches a .env file")
 
     # widening scope: the command reaches outside the workspace. File tools always had their paths checked; paths in commands did not
