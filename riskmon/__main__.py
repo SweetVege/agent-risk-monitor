@@ -21,7 +21,8 @@ def main() -> None:
     s.add_argument("--data", default=str(config.data_dir()), help="audit data directory")
     r = sub.add_parser("resume", help="resume a suspended session")
     r.add_argument("session_id")
-    i = sub.add_parser("init", help="install the hooks into a project's .claude/settings.json")
+    i = sub.add_parser("init", help="turn protection on: for every session on this machine with --user, or for one project")
+    i.add_argument("--user", action="store_true", help="cover every Claude Code session this user starts, in any project")
     i.add_argument("--project", default=".", help="project directory (default: the current one)")
     i.add_argument("--remove", action="store_true", help="take our hooks out again")
     d = sub.add_parser("doctor", help="check which setup step is still missing")
@@ -52,12 +53,16 @@ def main() -> None:
     if args.cmd == "init":
         from . import install
 
-        path, touched = install.apply(args.project, args.remove)
+        path, touched = install.apply(args.project, args.remove, args.user)
         if not touched:
             print(f"{path} needs no change: " + ("our hooks are not in it." if args.remove else "the hooks are already installed."))
         else:
             print(f"{'Removed from' if args.remove else 'Wrote to'} {path}: {', '.join(touched)}")
-            if not args.remove:
+            if not args.remove and args.user:
+                print("Every Claude Code session this user starts from now on is monitored, in any project.\n"
+                      "Keep the daemon running (riskmon serve): while it is not, the hook lets ordinary work through and\n"
+                      "refuses what goes beyond the policy, such as network access and reads of protected paths.")
+            elif not args.remove:
                 print("Only Claude Code sessions started in this project from now on are monitored.")
         return
     cfg = config.load(args.policy)

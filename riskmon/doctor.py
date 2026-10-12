@@ -37,10 +37,17 @@ def check(project: str = ".") -> bool:
         health = None
         line(False, f"not running on 127.0.0.1:{cfg['port']}", "start it: riskmon serve")
 
-    print(f"Project {Path(project).expanduser().resolve()}")
+    print("Protection")
+    everywhere = [e for e in install.EVENTS if e not in install.installed_events(user=True)]
     have = install.installed_events(project)
     missing = [e for e in install.EVENTS if e not in have]
-    line(not missing, "hooks installed" if not missing else f"hooks missing: {', '.join(missing)}", "install them: run riskmon init in the project")
+    if not everywhere:
+        line(True, f"on for every session this user starts ({install.user_settings_path()})")
+    else:
+        line(None, "not on for the whole machine" + (f"; partly installed, missing {', '.join(everywhere)}" if len(everywhere) < len(install.EVENTS) else ""),
+             "to cover every session: riskmon init --user")
+        line(not missing, f"on for the project {Path(project).expanduser().resolve()}" if not missing else f"off for the project {Path(project).expanduser().resolve()}"
+             + (f": missing {', '.join(missing)}" if have else ""), "to cover this project only: riskmon init")
 
     print("Unattended runs (optional)")
     cli = shutil.which("claude") or (str(Path.home() / ".local/bin/claude") if (Path.home() / ".local/bin/claude").exists() else "")

@@ -657,6 +657,30 @@ class SetupTest(unittest.TestCase):
         d = engine.evaluate(call("Read", file_path=os.path.join(os.path.realpath(self.dir), "policy.json")))
         self.assertEqual(d.verdict, "deny")
 
+    def test_init_for_the_user_covers_every_project_and_leaves_other_settings_alone(self):
+        from unittest import mock
+
+        from riskmon import install
+
+        config_dir = os.path.join(self.dir, "claude-config")
+        os.makedirs(config_dir)
+        settings = os.path.join(config_dir, "settings.json")
+        with open(settings, "w") as f:
+            json.dump({"model": "opus", "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "my-own-hook"}]}]}}, f)
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": config_dir}):
+            path, touched = install.apply(user=True)
+            self.assertEqual((str(path), sorted(touched)), (settings, sorted(install.EVENTS)))
+            self.assertEqual(install.installed_events(user=True), list(install.EVENTS))
+            self.assertEqual(install.apply(user=True)[1], [])  # a second time changes nothing
+            data = json.loads(Path(settings).read_text())
+            self.assertEqual(data["model"], "opus")
+            self.assertEqual(data["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "my-own-hook")
+            # a project with nothing of its own is not written to
+            self.assertFalse(os.path.exists(os.path.join(self.dir, ".claude", "settings.json")))
+            install.apply(user=True, remove=True)
+            data = json.loads(Path(settings).read_text())
+            self.assertEqual((data["model"], list(data["hooks"]), install.installed_events(user=True)), ("opus", ["PreToolUse"], []))
+
     def test_init_merges_into_existing_settings_and_is_repeatable(self):
         from riskmon import install
 
