@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import insights, report
+from . import config, insights, projects, report
 from .engine import Engine
 from .events import from_claude_code
 from .optional import drift
@@ -26,7 +26,8 @@ def policy_view(cfg: dict) -> dict:
     }
 
 
-def make_handler(engine: Engine, extension=None):
+def make_handler(engine: Engine, extension=None, policy_file=None):
+    policy_file = policy_file or config.user_policy_path()
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # the audit log is in SQLite; no access log on stderr
             pass
@@ -76,7 +77,7 @@ def make_handler(engine: Engine, extension=None):
             if url.path == "/api/incidents":
                 return self._send(200, insights.incidents(engine.store))
             if url.path == "/api/policy":
-                return self._send(200, policy_view(engine.cfg))
+                return self._send(200, {"baseline": policy_view(engine.cfg), "projects": engine.projects, "rules": list(projects.RULES), "file": str(policy_file)})
             if url.path == "/":
                 return self._send(200, _PAGE.read_bytes(), "text/html")
             if extension is not None and url.path.startswith("/test/"):
@@ -136,6 +137,30 @@ def make_handler(engine: Engine, extension=None):
                     return self._send(200, {"recorded": found})
                 return self._send(200, {"verdict": "allow"})
 
+            if path.startswith("/api/policy/"):
+                # the policy decides what every agent may do, so a change must come from the console's own page
+                origin = self.headers.get("Origin") or ""
+                if self.headers.get("X-Riskmon") != "1" or (origin and not re.fullmatch(r"http://(127\.0\.0\.1|localhost):\d+", origin)):
+                    return self._send(403, {"error": "forbidden"})
+                try:
+                    current = list(engine.projects)
+                    if path == "/api/policy/baseline":
+                        projects.save_baseline(policy_file, payload)
+                    elif path == "/api/policy/projects":
+                        project = projects.clean_project(payload)
+                        was = payload.get("was") or project["name"]
+                        current = [p for p in current if p["name"] not in (was, project["name"])] + [project]
+                        projects.save(sorted(current, key=lambda p: p["name"].lower()))
+                    elif path == "/api/policy/projects/delete":
+                        current = [p for p in current if p["name"] != payload.get("name")]
+                        projects.save(current)
+                    else:
+                        return self._send(404, {"error": "not found"})
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
+                engine.set_policy(config.load(policy_file if Path(policy_file).exists() else None), projects.load())
+                return self._send(200, {"ok": True})
+
             parts = path.strip("/").split("/")
             if len(parts) == 4 and parts[0] == "api" and parts[3] in ("resume", "false-positive", "dismiss"):
                 # a custom header forces a preflight on cross-site browser requests, and we don't answer preflights
@@ -157,11 +182,12 @@ def make_handler(engine: Engine, extension=None):
     return Handler
 
 
-def serve(engine: Engine, port: int) -> None:
+def serve(engine: Engine, port: int, policy_file=None) -> None:
     from .optional import test_area
 
+    engine.projects = projects.load()
     try:
-        httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine, test_area()))
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine, test_area(), policy_file))
     except OSError as e:
         # usually a daemon that is already running, by hand or as the login service
         raise SystemExit(f"cannot listen on 127.0.0.1:{port}: {e.strerror}. Is the daemon already running? Check with: riskmon doctor")

@@ -526,6 +526,56 @@ class ReadOnlyPathsTest(unittest.TestCase):
         self.assertNotIn("readonly_write", rules.assess(call("Bash", command="rm tests/test_a.py"), config.load()).facets)
 
 
+class ProjectPolicyTest(unittest.TestCase):
+    """A project adds its own scope to the baseline and may be stricter than it, never looser."""
+
+    def setUp(self):
+        from riskmon import projects
+
+        self.projects = projects
+        self.fx = projects.clean_project({"name": "fx-tools", "root": CWD, "allow_hosts": ["rates-api.corp.internal"], "read_only": ["vendor"],
+                                          "unattended": {"unlisted_host": "deny", "outside_write": "score"}})
+        self.engine = Engine(config.load(), judge=NoJudge(), project_policies=[self.fx])
+        self.addCleanup(self.engine.store.close)
+
+    def run_bash(self, command, session, cwd=CWD):
+        return self.engine.evaluate(from_claude_code({"session_id": session, "cwd": cwd, "tool_name": "Bash", "tool_input": {"command": command}, "riskmon_mode": "unattended"}))
+
+    def test_a_session_in_the_project_gets_its_scope(self):
+        self.assertEqual(self.run_bash("curl -s https://rates-api.corp.internal/v1/daily", "in").verdict, "allow")
+        # read-only paths are the project's, wherever under it the session was started
+        self.assertEqual(self.run_bash("sed -i s/a/b/ ../vendor/lib/x.py", "in2", CWD + "/src").verdict, "deny")
+        self.assertEqual(self.engine.store.load_state("in2").project, "fx-tools")
+        # the same actions elsewhere get the baseline alone
+        self.assertEqual(self.run_bash("curl -s https://rates-api.corp.internal/v1/daily", "out", "/work/other").verdict, "hold")
+        self.assertEqual(self.run_bash("sed -i s/a/b/ vendor/lib/x.py", "out2", "/work/other").verdict, "allow")
+
+    def test_a_project_can_tighten_the_handling_and_cannot_loosen_it(self):
+        self.assertEqual(self.run_bash("curl https://unlisted.example.org/a", "t1").verdict, "deny")  # the baseline would hold this
+        self.assertEqual(self.run_bash("echo x > /opt/outside.txt", "t2").verdict, self.run_bash("echo x > /opt/outside.txt", "t3", "/work/other").verdict)
+        effective = self.projects.apply(self.engine.cfg, self.fx)["scope"]["unattended"]
+        self.assertEqual((effective["unlisted_host"], effective["outside_write"]), ("deny", "deny"))
+
+    def test_the_innermost_project_wins_and_bad_entries_are_refused(self):
+        inner = self.projects.clean_project({"name": "inner", "root": CWD + "/services/api"})
+        self.assertEqual(self.projects.find([self.fx, inner], CWD + "/services/api/src")["name"], "inner")
+        self.assertEqual(self.projects.find([self.fx, inner], CWD + "-other"), None)
+        for bad in ({"name": "", "root": CWD}, {"name": "x", "root": "relative/path"}, {"name": "x", "root": CWD, "allow_hosts": ["https://a.example/path"]},
+                    {"name": "x", "root": CWD, "unattended": {"unlisted_host": "allow"}}, {"name": "x", "root": CWD, "read_only": ["a\nb"]}):
+            with self.assertRaises(ValueError, msg=bad):
+                self.projects.clean_project(bad)
+
+    def test_the_baseline_is_saved_without_touching_other_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "policy.json")
+            with open(path, "w") as f:
+                json.dump({"port": 9999, "thresholds": {"deny": 80}}, f)
+            self.projects.save_baseline(path, {"allow_hosts": ["api.example.org"], "read_only": ["vendor"], "unattended": {"unlisted_host": "deny", "outside_write": "score"}})
+            cfg = config.load(path)
+            self.assertEqual((cfg["port"], cfg["thresholds"]["deny"], cfg["allow_hosts"], cfg["scope"]["read_only"]), (9999, 80, ["api.example.org"], ["vendor"]))
+            self.assertEqual((cfg["scope"]["unattended"]["unlisted_host"], cfg["scope"]["unattended"]["outside_write"]), ("deny", "score"))
+
+
 class ObserveModeTest(unittest.TestCase):
     """Observe mode relaxes holds only, to see how far an agent goes when nothing stops it."""
 

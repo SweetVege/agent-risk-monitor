@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from . import rules, scope, state, transcript
+from . import projects, rules, scope, state, transcript
 from .events import ActionEvent
 from .optional import Judge, drift
 from .store import Store
@@ -39,8 +39,9 @@ class Decision:
 
 
 class Engine:
-    def __init__(self, cfg: dict, store: Store | None = None, judge=None):
+    def __init__(self, cfg: dict, store: Store | None = None, judge=None, project_policies: list | None = None):
         self.cfg = cfg
+        self.projects = project_policies or []
         self.store = store or Store()
         self.judge = judge if judge is not None else Judge(cfg)
         self._locks: dict = defaultdict(threading.Lock)
@@ -129,11 +130,16 @@ class Engine:
         self.store.set_event_detail(event_id, {**row["detail"], "review": "dismissed"})
 
     def _session_cfg(self, st: state.SessionState) -> dict:
-        """The policy plus the extra hosts and directories declared when this run was launched."""
+        """The baseline, plus the session's project, plus the hosts and directories declared when this run was launched."""
+        cfg = projects.apply(self.cfg, next((p for p in self.projects if p["name"] == st.project), None)) if st.project else self.cfg
         if not (st.scope_hosts or st.scope_dirs):
-            return self.cfg
-        extra = {**self.cfg["scope"], "extra_dirs": self.cfg["scope"]["extra_dirs"] + st.scope_dirs}
-        return {**self.cfg, "allow_hosts": self.cfg["allow_hosts"] + st.scope_hosts, "scope": extra}
+            return cfg
+        extra = {**cfg["scope"], "extra_dirs": cfg["scope"]["extra_dirs"] + st.scope_dirs}
+        return {**cfg, "allow_hosts": cfg["allow_hosts"] + st.scope_hosts, "scope": extra}
+
+    def set_policy(self, cfg: dict, project_policies: list) -> None:
+        """Put a changed policy into force. Sessions keep the project they started in; its rules are read afresh on their next action."""
+        self.cfg, self.projects = cfg, project_policies
 
     def evaluate(self, ev: ActionEvent) -> Decision:
         t0 = time.perf_counter()
@@ -146,6 +152,7 @@ class Engine:
                 st.scope_hosts, st.scope_dirs = ev.scope_hosts, ev.scope_dirs
             if st.step == 0:
                 st.observe = ev.observe  # likewise only taken at the start of the run
+                st.project = (projects.find(self.projects, ev.cwd) or {}).get("name", "")
             cfg = self._session_cfg(st)
             l0 = rules.assess(ev, cfg)
             said = transcript.said_before(ev.transcript_path, ev.tool_use_id)

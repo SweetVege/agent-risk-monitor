@@ -90,7 +90,7 @@ def main() -> None:
     if args.cmd == "serve":
         data = Path(args.data)
         data.mkdir(parents=True, exist_ok=True)
-        serve(Engine(cfg, Store(str(data / "riskmon.db"))), cfg["port"])
+        serve(Engine(cfg, Store(str(data / "riskmon.db"))), cfg["port"], args.policy)
     elif args.cmd == "resume":
         req = urllib.request.Request(
             f"http://127.0.0.1:{cfg['port']}/api/sessions/{args.session_id}/resume",

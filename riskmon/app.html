@@ -79,6 +79,14 @@
   .kv .k { color: var(--muted); font-size: 12px; white-space: nowrap; padding-top: 2px; }
   ul.plain { margin: 0; padding-left: 18px; }
   .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--soft); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  .tag.fixed { padding-right: 10px; color: var(--muted); }
+  .tag .x { border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 50%; }
+  .tag .x:hover { background: var(--line); color: var(--text); }
+  .addrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .addrow input { flex: 1 1 200px; min-width: 0; font: inherit; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  select { font: inherit; padding: 4px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
   .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
 </style>
 <link rel="stylesheet" href="/test/app.css" id="test-css" disabled>
@@ -157,7 +165,7 @@ async function protectView() {
     el("tbody", {}, sessions.slice(0, 40).map(s => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(s.id) },
       el("td", { class: "muted", style: "white-space:nowrap" }, ago(s.updated)), el("td", {}, el("div", { class: "task" }, s.task || "(no task recorded)")),
       el("td", { class: "num" }, s.step), el("td", { class: "num" }, s.denies),
-      el("td", {}, s.suspended ? el("span", { class: "chip bad" }, "suspended") : null, s.unattended ? [" ", el("span", { class: "chip" }, s.holds ? `unattended · ${s.holds} held` : "unattended")] : null)))))) : el("p", { class: "muted", style: "margin:0" }, "No sessions yet."));
+      el("td", {}, s.project ? [el("span", { class: "chip" }, s.project), " "] : null, s.suspended ? el("span", { class: "chip bad" }, "suspended") : null, s.unattended ? [" ", el("span", { class: "chip" }, s.holds ? `unattended · ${s.holds} held` : "unattended")] : null)))))) : el("p", { class: "muted", style: "margin:0" }, "No sessions yet."));
   const y = window.scrollY;
   main.replaceChildren(...[empty, tiles, queue, stoppedSessions, kinds, feed, list].filter(Boolean));
   window.scrollTo(0, y);
@@ -206,25 +214,72 @@ async function sessionView(id, focus) {
   if (focus) document.getElementById("e" + focus)?.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
 }
 
+const send = async (path, body) => {
+  const r = await fetch(path, { method: "POST", headers: { "X-Riskmon": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error || "That could not be saved."); return false; }
+  return true;
+};
+const RANK = { score: 0, confirm: 1, deny: 2 };
+
+// a list a person edits in place: each change is saved at once, and the page is redrawn from what the daemon then has
+function listEditor(values, placeholder, save, fixed = []) {
+  const input = el("input", { type: "text", placeholder, "aria-label": placeholder, onkeydown: e => { if (e.key === "Enter") add(); } });
+  const add = async () => { const v = input.value.trim(); if (v && await save([...values, v])) policyView(); };
+  return el("div", {},
+    fixed.length ? el("div", { class: "tags" }, fixed.map(v => el("span", { class: "tag fixed", title: "from the baseline" }, v))) : null,
+    el("div", { class: "tags" }, values.map(v => el("span", { class: "tag" }, v, el("button", { class: "x", title: "Remove", "aria-label": "Remove " + v, onclick: async () => { if (await save(values.filter(x => x !== v))) policyView(); } }, "×"))),
+      !values.length && !fixed.length ? el("span", { class: "muted" }, "None") : null),
+    el("div", { class: "addrow" }, input, el("button", { class: "btn", onclick: add }, "Add")));
+}
+
+function handlingTable(rules, chosen, floor, save) {
+  return el("div", { class: "scroll" }, el("table", {}, el("tbody", {}, rules.map(rule => {
+    const least = RANK[floor[rule] || "score"], now = Math.max(least, RANK[chosen[rule] || "score"]);
+    const select = el("select", { "aria-label": RULES[rule], onchange: async e => { if (await save({ ...chosen, [rule]: e.target.value })) policyView(); } },
+      Object.entries(HANDLING).map(([value, [word]]) => el("option", { value, selected: RANK[value] === now, disabled: RANK[value] < least }, word)));
+    return el("tr", {}, el("td", {}, RULES[rule] || rule), el("td", {}, select));
+  }))));
+}
+
 async function policyView() {
-  let p;
-  try { p = await get("/api/policy"); } catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The policy could not be loaded.")); return; }
-  const items = xs => xs.length ? el("div", { class: "mono" }, xs.map(x => el("div", {}, x))) : el("span", { class: "muted" }, "None declared");
-  const handling = (title, rules, note) => el("section", { class: "panel" }, el("h3", {}, title), el("p", { class: "muted", style: "margin:0 0 10px" }, note),
-    el("div", { class: "scroll" }, el("table", {}, el("tbody", {}, Object.entries(RULES).map(([key, label]) => { const [word, tone] = HANDLING[rules[key] || "score"];
-      return el("tr", {}, el("td", {}, label), el("td", {}, el("span", { class: "chip " + tone }, word))); })))));
+  let data;
+  try { data = await get("/api/policy"); } catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The policy could not be loaded.")); return; }
+  const p = data.baseline, y = window.scrollY;
+  const base = body => send("/api/policy/baseline", body);
   const t = p.thresholds;
-  main.replaceChildren(
-    el("div", { class: "banner info" }, el("div", {}, "This is the policy in force. To change it, put only the keys you want to change in ", el("code", {}, "policy.json"), " in the monitor's home directory and restart the daemon. Editing it here comes next.")),
-    handling("When nobody is watching", p.unattended, "What happens to each kind of action in an unattended run. Refusals of this kind tell the agent which limit it met."),
-    handling("When someone is at the keyboard", p.attended, "In an attended session a person can be asked, so less is refused outright."),
-    el("section", { class: "panel" }, el("h3", {}, "Hosts an agent may contact"), items(p.allow_hosts)),
-    el("section", { class: "panel" }, el("h3", {}, "Paths declared read-only"), items(p.read_only), el("p", { class: "muted small", style: "margin:8px 0 0" }, "Relative paths are taken from each session's workspace. Reading and running what is there is unaffected.")),
-    el("section", { class: "panel" }, el("h3", {}, "Protected paths"), items(p.protected_paths)),
-    el("section", { class: "panel" }, el("h3", {}, "When the score alone decides"), el("div", { class: "kv" },
+  const baseline = el("section", { class: "panel" }, el("h2", {}, "Baseline"),
+    el("p", { class: "muted", style: "margin:0 0 14px" }, "Every session follows this, in every project. Changes take effect on each session's next action."),
+    el("h3", {}, "Hosts an agent may contact"), listEditor(p.allow_hosts, "api.example.org", v => base({ allow_hosts: v })),
+    el("h3", { style: "margin-top:18px" }, "Protected paths"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "Credentials and the like. Reading one counts, not only changing it."),
+    listEditor(p.protected_paths, "~/.ssh", v => base({ protected_paths: v })),
+    el("h3", { style: "margin-top:18px" }, "Read-only paths"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "Relative paths are taken from each session's workspace. Reading and running what is there is unaffected."),
+    listEditor(p.read_only, "vendor", v => base({ read_only: v })),
+    el("h3", { style: "margin-top:18px" }, "When nobody is watching"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "What happens to each kind of action in an unattended run. A refusal of this kind tells the agent which limit it met."),
+    handlingTable(data.rules, p.unattended, {}, v => base({ unattended: v })),
+    el("h3", { style: "margin-top:18px" }, "When someone is at the keyboard"), handlingTable(data.rules, p.attended, {}, v => base({ attended: v })),
+    el("h3", { style: "margin-top:18px" }, "When the score alone decides"), el("div", { class: "kv" },
       el("div", { class: "k" }, "Below " + t.ask), el("div", {}, "allowed"), el("div", { class: "k" }, `${t.ask} to ${t.deny - 1}`), el("div", {}, "a person is asked, or the action is held when nobody is there"),
       el("div", { class: "k" }, `${t.deny} to ${t.suspend - 1}`), el("div", {}, "refused"), el("div", { class: "k" }, t.suspend + " and above"), el("div", {}, "the session is suspended"),
-      el("div", { class: "k" }, "Also suspended after"), el("div", {}, `${p.suspend_after_denies} refusals, or ${p.max_holds} actions held in an unattended run`))));
+      el("div", { class: "k" }, "Also suspended after"), el("div", {}, `${p.suspend_after_denies} refusals, or ${p.max_holds} actions held in an unattended run`)),
+    el("p", { class: "muted small", style: "margin:12px 0 0" }, "Saved in ", el("code", {}, data.file), ". The thresholds are changed there."));
+  const project = pr => {
+    const put = patch => send("/api/policy/projects", { ...pr, ...patch });
+    return el("section", { class: "panel" }, el("div", { style: "display:flex;gap:12px;align-items:baseline;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, pr.name), el("span", { class: "mono muted" }, pr.root),
+        el("button", { class: "btn", style: "margin-left:auto", onclick: async () => { if (confirm(`Remove the project "${pr.name}"? Sessions there go back to the baseline alone.`) && await send("/api/policy/projects/delete", { name: pr.name })) policyView(); } }, "Remove project")),
+      el("p", { class: "muted", style: "margin:6px 0 14px" }, "Applies to sessions started in this directory or below it, on top of the baseline."),
+      el("h3", {}, "More hosts this project may contact"), listEditor(pr.allow_hosts, "api.internal.example", v => put({ allow_hosts: v })),
+      el("h3", { style: "margin-top:18px" }, "More directories it may use, outside its own"), listEditor(pr.extra_dirs, "/data/shared", v => put({ extra_dirs: v })),
+      el("h3", { style: "margin-top:18px" }, "Read-only paths in this project"), listEditor(pr.read_only, "vendor", v => put({ read_only: v }), p.read_only),
+      el("h3", { style: "margin-top:18px" }, "Protected paths in this project"), listEditor(pr.protected_paths, "secrets", v => put({ protected_paths: v })),
+      el("h3", { style: "margin-top:18px" }, "Stricter handling when nobody is watching"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "A project can be stricter than the baseline, never looser. Choices below the baseline's are greyed out."),
+      handlingTable(data.rules, pr.unattended, p.unattended, v => put({ unattended: v })),
+      el("h3", { style: "margin-top:18px" }, "Stricter handling when someone is at the keyboard"), handlingTable(data.rules, pr.attended, p.attended, v => put({ attended: v })));
+  };
+  const name = el("input", { type: "text", placeholder: "Name, such as fx-tools", "aria-label": "Project name" }), root = el("input", { type: "text", placeholder: "/full/path/to/the/project", "aria-label": "Project directory", style: "flex:2 1 260px" });
+  const create = el("section", { class: "panel" }, el("h3", {}, "Add a project"), el("p", { class: "muted", style: "margin:0 0 10px" }, "Give a directory its own scope: the hosts it needs, the paths that must not change there."),
+    el("div", { class: "addrow" }, name, root, el("button", { class: "btn primary", onclick: async () => { if (await send("/api/policy/projects", { name: name.value, root: root.value })) policyView(); } }, "Add project")));
+  main.replaceChildren(baseline, el("h3", { style: "margin:24px 0 10px" }, `Projects · ${data.projects.length}`), ...data.projects.map(project), create);
+  window.scrollTo(0, y);
 }
 
 function chrome() {

@@ -47,6 +47,7 @@ class SessionState:
     scope_hosts: list = field(default_factory=list)  # extra scope declared when this run was launched
     scope_dirs: list = field(default_factory=list)
     approved: list = field(default_factory=list)  # actions a person approved; allowed outright if they recur in this session
+    project: str = ""  # the project whose policy applies, fixed when the session starts
     held: list = field(default_factory=list)  # actions waiting for review; trying one again is refused outright
     suspended: bool = False
     suspended_reason: str = ""

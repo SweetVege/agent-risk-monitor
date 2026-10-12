@@ -86,6 +86,7 @@ class Store:
                     "drift_peak": st.get("drift_peak", 0),
                     "holds": st.get("holds", 0),
                     "unattended": st.get("unattended", False),
+                    "project": st.get("project", ""),
                     "observe": st.get("observe", False),
                     "suspended": st["suspended"],
                     "suspended_reason": st["suspended_reason"],

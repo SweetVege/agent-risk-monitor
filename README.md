@@ -61,9 +61,9 @@ When the daemon is not running, the hook denies actions such as network access a
 | Resume a suspended session | "Resume session" in the console, or `riskmon resume <session id>` |
 | Approve a held action, or keep it refused | "Approve" or "Keep it refused" in the console's review queue |
 | Overturn a wrong verdict | "Mark false positive" on that action in the session |
-| See the policy in force | The console's Policy page |
+| Give a project its own scope | "Add a project" on the Policy page |
 | Run a task unattended | `riskmon run --cwd <project> "task"`; needs the `claude` CLI |
-| Change the policy | Create `~/.riskmon/policy.json` with just the keys you change, then restart the daemon |
+| Change the policy | The console's Policy page; changes take effect on each session's next action. Thresholds and other keys: `~/.riskmon/policy.json` with just the keys you change, then restart the daemon |
 
 A policy example that adds an API you use to the host allowlist and raises the deny line:
 
@@ -86,6 +86,7 @@ The policy and the audit data live in `~/.riskmon/`; set `RISKMON_HOME` to move 
 | `riskmon/events.py` | Adapter layer. Turns a tool call into an `ActionEvent` |
 | `riskmon/rules.py` | L0, the capability allowlist. Whether a host, path or command is beyond what the policy allows |
 | `riskmon/scope.py` | Scope policy. Says outright how a class of action is handled |
+| `riskmon/projects.py` | The policy's two layers: a baseline, and what each project adds to it |
 | `riskmon/state.py` | L1, trajectory state. Carried score, behaviour tags, combination rules, the summary a judge reads |
 | `riskmon/optional.py` | The slots for the judge and the drift score, and what stands in when they are absent |
 | `riskmon/engine.py` | Ties the tiers together and maps the result to a verdict |
@@ -118,6 +119,8 @@ The policy can also declare paths inside the workspace read-only, for example ve
 ```
 
 A change to one is denied in an unattended run and needs a person's agreement in an attended one. Reading and running what is there is unaffected. Nothing is read-only unless the policy says so.
+
+**Baseline and projects.** The policy has two layers. The baseline is what every session follows. A project is a directory with additions of its own: hosts it may contact, directories it may use outside its own, paths that are read-only or protected there. A session started in that directory or below it gets the baseline plus those. A project can also make the handling of a kind of action stricter than the baseline; it cannot make it looser. Both layers are edited on the console's Policy page and kept in the monitor's home directory (`policy.json` and `projects.json`), which an agent is not allowed to read or change.
 
 An unattended run can declare extra scope when it is launched. It cannot be widened afterwards:
 
