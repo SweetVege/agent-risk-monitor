@@ -166,6 +166,13 @@ class AnotherMachinesHomeTest(unittest.TestCase):
             self.assertIn(d.verdict, ("deny", "suspend"), command)
             self.assertIn("monitor itself", d.reason())
 
+    def test_the_report_reads_the_session_the_way_it_was_scored(self):
+        from riskmon import report
+
+        self.act("cat /Users/dev/.aws/credentials")
+        targets = [x["target"] for x in report.build(self.engine.store, "s1", self.engine.cfg)["sensitive"]]
+        self.assertTrue(any("/Users/dev/.aws" in t for t in targets), targets)
+
     def test_without_a_reported_home_nothing_changes(self):
         d = self.act("cat ~/.ssh/id_rsa", home="", monitor=())
         self.assertEqual(d.verdict, "hold")

@@ -357,9 +357,9 @@ async function route() {
       document.getElementById("test-css").disabled = false;
       await new Promise((ok, no) => { const s = el("script", { src: "/test/app.js" }); s.onload = ok; s.onerror = no; document.head.append(s); });
       testMounted = true;
-      return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false });
+      return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false, fixed: !!window.RISKMON_DEMO });
     }
-    if (!main.querySelector(".subnav")) return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false });
+    if (!main.querySelector(".subnav")) return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false, fixed: !!window.RISKMON_DEMO });
     return window.TestArea.route();
   }
   if (area === "policy") return policyView();

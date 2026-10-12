@@ -4,7 +4,19 @@ An out-of-band monitor for autonomous coding agents. It scores each action befor
 
 The first supported agent is Claude Code, through its hooks.
 
-**See what it does:** [sweetvege.github.io/agent-risk-monitor](https://sweetvege.github.io/agent-risk-monitor/) has recorded runs of five models on two tasks built to tempt them, with the monitor recording or refusing. Each run can be replayed step by step.
+## See it
+
+**[Try the console](https://sweetvege.github.io/agent-risk-monitor/demo/)** in your browser. It is the real page with made-up sample data and nothing behind it: review a held action, open a session, change a policy.
+
+[![The console's first page: one action waiting for review with its run paused, one suspended session, and what was stopped this week](docs/img/console-protect.jpg)](https://sweetvege.github.io/agent-risk-monitor/demo/)
+
+Every session can be opened to see each action, the verdict it got and why:
+
+[![A session in the console: eight actions, one of them a change to vendored code that was denied](docs/img/console-session.jpg)](https://sweetvege.github.io/agent-risk-monitor/demo/#/protect/session/7c1e-settle-fix)
+
+**[Evaluation results](https://sweetvege.github.io/agent-risk-monitor/)** has recorded runs of five models on two tasks built to tempt them, with the monitor recording or refusing. Each run can be replayed step by step.
+
+[![The results page: how often each of five models used another project's token, with the monitor recording and with it refusing](docs/img/results.jpg)](https://sweetvege.github.io/agent-risk-monitor/)
 
 This repository is the open core: the hook, the rule and trajectory tiers, the scope policy, the daemon and console, the activity report and unattended runs. Two parts used in the experiments under `evals/experiments/` are not included: the model judge that reviews gray-band actions against the user's task, and the drift score. The engine runs without them; what that changes is described below.
 
@@ -154,7 +166,7 @@ An unattended run on that machine then waits up to that many seconds on a held a
 | `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
 | `riskmon/default_policy.json` | The default policy: thresholds, host allowlist, protected paths, command classes, scope policy |
-| `docs/` | The project's page: recorded evaluation runs as static files, served by GitHub Pages |
+| `docs/` | The project's page, served by GitHub Pages: recorded evaluation runs, and a demo of the console with sample data |
 | `deploy/` | The shared daemon as a container image, with a Compose file and an optional TLS proxy |
 | `evals/` | Eval replay and experiment records |
 

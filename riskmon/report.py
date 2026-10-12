@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from collections import Counter
 
-from . import rules
+from . import config, rules
 from .events import ActionEvent
 from .optional import HAS_DRIFT, drift
 from .store import Store
@@ -20,8 +20,18 @@ _SENSITIVE = {"protected_access": "protected path", "monitor_probe": "monitor co
 
 def build(store: Store, session_id: str, cfg: dict, workspace: str = "") -> dict:
     """`workspace` is only needed for old records: early events did not store their working directory, and without it inside and outside cannot be told apart."""
-    events = list(reversed(store.events(session_id, limit=5000)))
     st = store.load_state(session_id)
+    # a session on another machine is read the way it was scored: with that machine's home directory
+    home = rules.AGENT_HOME.set(st.home) if st.home else None
+    try:
+        return _build(store, session_id, config.rehome(cfg, st.home, st.monitor_paths), workspace, st)
+    finally:
+        if home is not None:
+            rules.AGENT_HOME.reset(home)
+
+
+def _build(store: Store, session_id: str, cfg: dict, workspace: str, st) -> dict:
+    events = list(reversed(store.events(session_id, limit=5000)))
     if st.scope_hosts or st.scope_dirs:  # judge against the scope this run declared, not the default policy
         cfg = {**cfg, "allow_hosts": cfg["allow_hosts"] + st.scope_hosts,
                "scope": {**cfg["scope"], "extra_dirs": cfg["scope"]["extra_dirs"] + st.scope_dirs}}

@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo · Risk Monitor</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --panel: #ffffff; --line: #e2e1db; --text: #1c1c1a; --muted: #6b6a65; --soft: #efeee9;
+    --good: #2f7d4f; --good-bg: #e6f3ea; --warn: #8a5a00; --warn-bg: #fbefd2;
+    --bad: #a32d2d; --bad-bg: #fbe6e6; --accent: #3c3489; --accent-bg: #ecebf8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9a9993; --soft: #282826;
+      --good: #7fd1a0; --good-bg: #173524; --warn: #f0c060; --warn-bg: #3a2c0a;
+      --bad: #f09595; --bad-bg: #401818; --accent: #afa9ec; --accent-bg: #2a2850;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 16px 24px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header .top { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 6px; text-wrap: balance; }
+  h3 { font-size: 12px; font-weight: 600; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+  nav { display: flex; gap: 4px; margin-top: 12px; }
+  nav a { padding: 8px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; font-weight: 500; }
+  nav a.on { color: var(--text); border-bottom-color: var(--accent); }
+  nav a .badge { margin-left: 6px; }
+  main { padding: 20px 24px 48px; max-width: 1180px; margin: 0 auto; }
+  @media (max-width: 700px) { main { padding: 16px; } header { padding: 14px 16px 0; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; white-space: nowrap; }
+  a { color: var(--accent); }
+  .chip { display: inline-block; white-space: nowrap; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--soft); color: var(--muted); }
+  .chip.allow, .chip.good { color: var(--good); background: var(--good-bg); }
+  .chip.hold, .chip.ask, .chip.warn { color: var(--warn); background: var(--warn-bg); }
+  .chip.deny, .chip.suspend, .chip.bad { color: var(--bad); background: var(--bad-bg); }
+  .badge { display: inline-block; min-width: 1.5em; text-align: center; padding: 0 6px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--bad); color: var(--panel); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .n { font-size: 26px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 12px; }
+  .tile.alert { border-color: var(--bad); } .tile.alert .n { color: var(--bad); }
+  .tile.calm .n { color: var(--good); }
+  .item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .item:first-of-type { padding-top: 0; } .item:last-child { border-bottom: 0; padding-bottom: 0; }
+  .item .meta { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .item .why { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .item .acts { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .mono, pre, code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .cmd { background: var(--soft); border-radius: 6px; padding: 6px 10px; max-height: 120px; overflow: auto; }
+  button { font: inherit; cursor: pointer; }
+  .btn { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .btn.primary { border-color: var(--accent); background: var(--accent); color: var(--panel); font-weight: 600; }
+  .btn:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .bars { display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 12px; align-items: center; }
+  .bars .track { height: 8px; border-radius: 4px; background: var(--soft); overflow: hidden; }
+  .bars .track i { display: block; height: 100%; background: var(--bad); border-radius: 4px; }
+  .banner { padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); } .banner.info { background: var(--accent-bg); color: var(--text); }
+  .rows tr { cursor: pointer; } .rows tbody tr:hover { background: var(--soft); }
+  .task { max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-bottom: 10px; overflow: hidden; }
+  .step.refused { border-color: var(--bad); }
+  .step .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  .step .why { color: var(--muted); font-size: 13px; flex: 1 1 320px; }
+  .step .body { padding: 9px 14px; }
+  .step .note { padding: 0 14px 9px; color: var(--muted); font-size: 13px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+  .kv .k { color: var(--muted); font-size: 12px; white-space: nowrap; padding-top: 2px; }
+  ul.plain { margin: 0; padding-left: 18px; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--soft); font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  .tag.fixed { padding-right: 10px; color: var(--muted); }
+  .tag .x { border: 0; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 50%; }
+  .tag .x:hover { background: var(--line); color: var(--text); }
+  .addrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  .addrow input { flex: 1 1 200px; min-width: 0; font: inherit; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  select { font: inherit; padding: 4px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
+</style>
+<link rel="stylesheet" href="../app.css" id="test-css" disabled>
+</head>
+<body>
+<header>
+  <div class="top"><h1>Risk Monitor</h1><span id="health" class="muted small"></span></div>
+  <nav><a href="#/protect" id="nav-protect">Protect</a><a href="#/test/findings" id="nav-test" hidden>Test</a><a href="#/policy" id="nav-policy">Policy</a></nav>
+</header>
+<div id="demo-banner" style="background:var(--accent-bg);color:var(--text);border-bottom:1px solid var(--line);padding:8px 24px;font-size:13px;display:flex;gap:6px 16px;flex-wrap:wrap;align-items:baseline">
+  <span><b>Demo.</b> This is the monitor's console with made-up sample data. Nothing is behind it: what you approve or change here stays in this tab and is gone when you reload.</span>
+  <span style="margin-left:auto;white-space:nowrap"><a href="../">Evaluation results</a> · <a href="https://github.com/SweetVege/agent-risk-monitor">Source on GitHub</a></span>
+</div>
+
+<main id="main"><p class="empty">Loading…</p></main>
+
+<script src="demo.js"></script>
+<script>
+"use strict";
+const main = document.getElementById("main");
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false && kid !== "") n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return n;
+};
+// On a shared daemon every request carries the member's token. It is kept for this browser tab only.
+let token = ""; try { token = sessionStorage.getItem("riskmon_token") || ""; } catch (e) {}
+let me = null;
+const headers = extra => ({ ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) });
+const signedOut = r => { if (r.status === 401) { signIn(token ? "That token was not accepted." : ""); throw new Error("signed out"); } return r; };
+const get = path => fetch(path, { headers: headers({}) }).then(signedOut).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const post = async path => { const r = signedOut(await fetch(path, { method: "POST", headers: headers({ "X-Riskmon": "1" }), body: "{}" })); if (!r.ok) alert((await r.json().catch(() => ({}))).error || "That did not work."); };
+
+function signIn(problem) {
+  clearInterval(timer);
+  const input = el("input", { type: "password", placeholder: "Member token", "aria-label": "Member token", autocomplete: "off", onkeydown: e => { if (e.key === "Enter") enter(); } });
+  const enter = () => { token = input.value.trim(); try { sessionStorage.setItem("riskmon_token", token); } catch (e) {} me = null; overview = null; testMounted = false; route(); };
+  document.querySelector("nav").hidden = true;
+  main.replaceChildren(el("section", { class: "panel", style: "max-width:460px;margin:48px auto" }, el("h2", {}, "Sign in"),
+    el("p", { class: "muted" }, "This daemon is shared. Paste the member token your administrator gave you. It is kept for this browser tab only."),
+    problem ? el("p", { class: "banner bad", style: "padding:8px 12px" }, problem) : null,
+    el("div", { class: "addrow" }, input, el("button", { class: "btn primary", onclick: enter }, "Sign in"))));
+  input.focus();
+}
+const ago = ts => { const s = Date.now() / 1000 - ts; return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " days ago"; };
+const WORD = { allow: "allowed", ask: "asked", hold: "held", deny: "denied", suspend: "suspended" };
+const RULES = { outside_write: "Writing outside the workspace", read_only_write: "Changing a read-only path", whole_machine_search: "Searching the whole machine or home directory",
+  outside_search: "Searching outside the workspace", outside_read: "Reading outside the workspace", unlisted_host: "Contacting a host off the allowlist", protected_path: "Touching a protected path", unknown_program: "Running an unlisted program" };
+const HANDLING = { score: ["Scored like anything else", ""], confirm: ["A person must agree", "warn"], deny: ["Refused", "bad"] };
+let timer = null, testMounted = false, overview = null;
+// the Protect page can be narrowed to one machine or one project; "-" stands for sessions that have none
+const narrow = { machine: "", project: "" };
+const narrowed = path => { const q = Object.entries(narrow).filter(([, v]) => v).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&"); return q ? path + "?" + q : path; };
+// where a session runs and as whom, on a shared daemon; nothing on a daemon for this machine alone
+const where = x => [x.machine, x.user].filter(Boolean).join(" · ");
+const by = name => name && name !== "local" ? " by " + name : " by a person";
+
+async function act(path) { await post(path); route(); }
+
+function pendingItem(p) {
+  return el("div", { class: "item" },
+    el("div", { class: "meta" }, ago(p.ts), " · ", el("span", { class: "chip warn" }, p.kind), where(p) ? [" · ", where(p)] : null, p.project ? [" · ", el("span", { class: "chip" }, p.project)] : null,
+      " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(p.session_id) }, "open the session")),
+    p.task ? el("div", {}, el("span", { class: "muted" }, "Task: "), p.task) : null,
+    p.wait_until > Date.now() / 1000 ? el("div", { class: "small", style: "margin-top:4px" }, el("span", { class: "chip warn" }, "run paused"), ` The run is waiting for this decision for another ${Math.max(1, Math.round((p.wait_until - Date.now() / 1000) / 60))} min, then moves on without it.`) : null,
+    el("pre", { class: "cmd", style: "margin-top:6px" }, p.target),
+    el("div", { class: "why" }, [p.reason, p.judge ? "judge: " + p.judge : ""].filter(Boolean).join(" · ")),
+    el("div", { class: "acts" }, el("button", { class: "btn primary", onclick: () => act(`/api/events/${p.id}/false-positive`) }, "Approve"),
+      el("button", { class: "btn", onclick: () => act(`/api/events/${p.id}/dismiss`) }, "Keep it refused")));
+}
+
+async function protectView() {
+  let o, pending, incidents, sessions;
+  try { [o, pending, incidents, sessions] = await Promise.all([get(narrowed("/api/overview")), get(narrowed("/api/pending")), get(narrowed("/api/incidents")), get(narrowed("/api/sessions"))]); }
+  catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The daemon is not answering.")); return; }
+  overview = o; chrome();
+  const tile = (n, label, cls) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "n" }, n), el("div", { class: "l" }, label));
+  const stopped = (o.stopped_week.deny || 0) + (o.stopped_week.suspend || 0);
+  const pick = (key, values, all, none) => values.length ? el("select", { "aria-label": all, onchange: e => { narrow[key] = e.target.value; protectView(); } },
+    [["", all], ...values.map(v => [v, v]), ["-", none]].map(([value, word]) => el("option", { value, selected: narrow[key] === value }, word))) : null;
+  const filters = o.machines.length || o.projects.length ? el("div", { class: "addrow", style: "margin:0 0 14px" }, el("span", { class: "muted small" }, "Show"),
+    pick("machine", o.machines, "every machine", "sessions with no machine"), pick("project", o.projects, "every project", "sessions in no project"),
+    narrow.machine || narrow.project ? el("span", { class: "muted small" }, o.pending > o.pending_here ? `${o.pending - o.pending_here} more waiting for review elsewhere` : "") : null) : null;
+  const shared = o.machines.length > 0;
+  const tiles = el("div", { class: "tiles" },
+    tile(o.pending_here, "waiting for your review", o.pending_here ? "alert" : "calm"),
+    tile(o.suspended.length, "sessions suspended", o.suspended.length ? "alert" : "calm"),
+    tile(stopped, "actions refused, last 7 days"), tile(o.sessions_week, "sessions, last 7 days"), tile(o.actions_week, "actions checked, last 7 days"));
+  const empty = !o.sessions_all ? el("div", { class: "banner info" }, el("div", {}, el("b", {}, "Nothing has been monitored yet. "),
+    "Turn protection on for every session with ", el("code", {}, "riskmon init --user"), ", then work as usual; what the monitor sees will appear here.",
+    o.test_area ? [" Meanwhile, the ", el("a", { href: "#/test/findings" }, "Test area"), " shows how five models behaved in scenarios built to tempt them."] : null)) : null;
+  const queue = el("section", { class: "panel" }, el("h3", {}, `Waiting for your review · ${pending.length}`),
+    pending.length ? pending.map(pendingItem) : el("p", { class: "muted", style: "margin:0" }, "Nothing is waiting. Actions that need a person's agreement in an unattended run appear here."));
+  const suspended = sessions.filter(s => s.suspended);
+  const stoppedSessions = suspended.length ? el("section", { class: "panel" }, el("h3", {}, `Suspended sessions · ${suspended.length}`), suspended.map(s => el("div", { class: "item" },
+    el("div", { class: "meta" }, ago(s.updated), where(s) ? [" · ", where(s)] : null, " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(s.id) }, "open the session")),
+    el("div", {}, s.task || "(no task recorded)"), el("div", { class: "why" }, s.suspended_reason),
+    el("div", { class: "acts" }, el("button", { class: "btn", onclick: () => act(`/api/sessions/${encodeURIComponent(s.id)}/resume`) }, "Resume session"))))) : null;
+  const top = Math.max(1, ...o.kinds_week.map(k => k[1]));
+  const kinds = o.kinds_week.length ? el("section", { class: "panel" }, el("h3", {}, "What was stopped or held, last 7 days"),
+    el("div", { class: "bars" }, o.kinds_week.flatMap(([label, n]) => [el("div", {}, label), el("div", { class: "track" }, el("i", { style: `width:${Math.round(100 * n / top)}%` })), el("div", { class: "muted" }, n)]))) : null;
+  const feed = el("section", { class: "panel" }, el("h3", {}, "Recently stopped or held"), incidents.length ? el("div", { class: "scroll" }, el("table", { class: "rows" },
+    el("thead", {}, el("tr", {}, ["When", shared ? "Where" : null, "What happened", "Kind", "Action"].filter(Boolean).map(h => el("th", {}, h)))),
+    el("tbody", {}, incidents.slice(0, 25).map(i => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(i.session_id) + "?e=" + i.id },
+      el("td", { class: "muted", style: "white-space:nowrap" }, ago(i.ts)), shared ? el("td", { class: "small", style: "white-space:nowrap" }, where(i)) : null, el("td", {}, el("span", { class: "chip " + i.verdict }, WORD[i.verdict]), i.would ? [" ", el("span", { class: "chip warn" }, "would be held")] : null,
+        i.review ? [" ", el("span", { class: "muted small" }, (i.review === "dismissed" ? "kept refused" : i.verdict === "hold" ? "approved" : "overturned") + (i.review_by && i.review_by !== "local" ? by(i.review_by) : ""))] : null),
+      el("td", {}, i.kind), el("td", {}, el("div", { class: "mono task" }, i.target))))))) : el("p", { class: "muted", style: "margin:0" }, "Nothing has been stopped."));
+  const list = el("section", { class: "panel" }, el("h3", {}, "Sessions"), sessions.length ? el("div", { class: "scroll" }, el("table", { class: "rows" },
+    el("thead", {}, el("tr", {}, ["Last active", shared ? "Where" : null, "Task", "Actions", "Refused", ""].filter(Boolean).map(h => el("th", {}, h)))),
+    el("tbody", {}, sessions.slice(0, 40).map(s => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(s.id) },
+      el("td", { class: "muted", style: "white-space:nowrap" }, ago(s.updated)), shared ? el("td", { class: "small", style: "white-space:nowrap" }, where(s)) : null, el("td", {}, el("div", { class: "task" }, s.task || "(no task recorded)")),
+      el("td", { class: "num" }, s.step), el("td", { class: "num" }, s.denies),
+      el("td", {}, s.project ? [el("span", { class: "chip" }, s.project), " "] : null, s.suspended ? el("span", { class: "chip bad" }, "suspended") : null, s.unattended ? [" ", el("span", { class: "chip" }, s.holds ? `unattended · ${s.holds} held` : "unattended")] : null)))))) : el("p", { class: "muted", style: "margin:0" }, "No sessions yet."));
+  const y = window.scrollY;
+  main.replaceChildren(...[empty, filters, tiles, queue, stoppedSessions, kinds, feed, list].filter(Boolean));
+  window.scrollTo(0, y);
+}
+
+function reviewButtons(e) {
+  const d = e.detail;
+  if (d.review) return el("span", { class: "muted small" }, (d.review === "dismissed" ? "kept refused" : e.verdict === "hold" ? "approved" : "marked a false positive") + by(d.review_by));
+  if (e.verdict === "allow" || d.carried == null || (d.facets || []).includes("monitor_tamper")) return null;
+  return [el("button", { class: "btn", onclick: () => act(`/api/events/${e.id}/false-positive`) }, e.verdict === "hold" ? "Approve" : "Mark false positive"),
+    e.verdict === "hold" ? el("button", { class: "btn", onclick: () => act(`/api/events/${e.id}/dismiss`) }, "Keep it refused") : null];
+}
+
+async function sessionView(id, focus) {
+  let events, report, sessions;
+  try { [events, report, sessions] = await Promise.all([get("/api/events?session_id=" + encodeURIComponent(id)), get("/api/report?session_id=" + encodeURIComponent(id)), get("/api/sessions")]); }
+  catch (e) { main.replaceChildren(el("p", { class: "empty" }, "This session could not be loaded.")); return; }
+  const s = sessions.find(x => x.id === id) || {};
+  const row = (k, v) => [el("div", { class: "k" }, k), el("div", {}, v)];
+  const list = items => items.length ? el("ul", { class: "plain" }, items.map(i => el("li", {}, i))) : el("span", { class: "muted" }, "None");
+  const counts = ["allow", "ask", "hold", "deny", "suspend"].filter(v => (report.verdicts || {})[v]).map(v => [el("span", { class: "chip " + v }, `${WORD[v]} ${report.verdicts[v]}`), " "]);
+  const summary = report.verdicts ? el("section", { class: "panel" }, el("h3", {}, "What this session touched"), el("div", { class: "kv" },
+    row("Actions", [`${report.actions}  `, counts, report.failed_actions ? `· ${report.failed_actions} failed when run` : ""]),
+    row("Task", list((report.tasks || []).map(t => t.slice(0, 400)))),
+    row("Workspace", [el("span", { class: "mono" }, report.workspace || "unknown"), el("span", { class: "muted" }, ` · ${report.files.read_inside} reads and ${report.files.written_inside} writes inside it`)]),
+    row("Outside the workspace", [report.regions.length ? el("div", { class: "mono" }, report.regions.join(" → ")) : null,
+      list([...report.files.outside.map(f => [f.write ? "wrote " : "read ", el("span", { class: "mono" }, f.path), f.ran ? "" : " (did not run)"]), ...report.searches.map(x => [x.scope, x.ran ? "" : " (did not run)"])])]),
+    row("Sensitive targets", list(report.sensitive.map(x => [x.what + "  ", el("span", { class: "mono" }, x.target), x.ran ? "" : " (did not run)"]))),
+    row("Network", list(report.hosts.map(h => [el("span", { class: "mono" }, h.host), " ", el("span", { class: "chip " + (h.allowed ? "good" : "warn") }, h.allowed ? "allowlisted" : "not allowlisted"),
+      el("span", { class: "muted" }, h.indirect ? " reached by a script it ran" : ` ${h.attempts} attempted, ${h.ran} run`)]))))) : null;
+  const steps = [...events].reverse().map((e, i) => {
+    const d = e.detail, refused = e.verdict !== "allow";
+    const why = [...(d.combos || []), ...(d.findings || []), d.rationale ? "judge: " + d.rationale : ""].filter(Boolean).join(" · ");
+    return el("div", { class: "step" + (refused ? " refused" : ""), id: "e" + e.id },
+      el("div", { class: "head" }, el("span", { class: "muted" }, i + 1), el("span", { class: "chip " + e.verdict }, WORD[e.verdict]), d.would ? el("span", { class: "chip warn" }, "would be held") : null,
+        el("span", { class: "muted small" }, `score ${e.score} · ${e.tier} · ${new Date(e.ts * 1000).toLocaleTimeString()}`), el("span", { class: "why" }, why), reviewButtons(e)),
+      el("div", { class: "body" }, el("pre", {}, `${e.tool}: ${e.target}`)),
+      d.said ? el("div", { class: "note" }, "Model said: " + d.said.slice(-300)) : null,
+      (d.outcome || {}).status === "failed" ? el("div", { class: "note" }, "Failed when run: " + (d.outcome.excerpt || "").slice(0, 240)) : null);
+  });
+  main.replaceChildren(...[
+    el("a", { class: "back", href: "#/protect" }, "← Back to the overview"),
+    s.suspended ? el("div", { class: "banner bad" }, el("span", {}, "Session suspended: " + s.suspended_reason), el("button", { class: "btn", onclick: () => act(`/api/sessions/${encodeURIComponent(id)}/resume`) }, "Resume session")) : null,
+    el("section", { class: "panel" }, el("h2", {}, s.task || "(no task recorded)"), el("div", { class: "muted small mono" }, id), el("div", { class: "muted small" }, [s.unattended ? "unattended" : "attended", s.observe ? "observe mode" : "", s.updated ? "last active " + ago(s.updated) : ""].filter(Boolean).join(" · ")),
+      s.machine || s.project || s.repo ? el("div", { class: "kv", style: "margin-top:10px" }, s.machine ? row("Machine", [s.machine, s.user ? el("span", { class: "muted" }, " as " + s.user) : null]) : null,
+        s.repo ? row("Repository", el("span", { class: "mono" }, s.repo)) : null, row("Policy", s.project ? ["baseline and the project ", el("b", {}, s.project)] : "baseline only"),
+        (s.resumed_by || []).length ? row("Resumed", "by " + s.resumed_by.join(", then ")) : null) : null),
+    summary, el("h3", { style: "margin:20px 0 10px" }, `Every action · ${events.length}`), ...steps].filter(Boolean));
+  if (focus) document.getElementById("e" + focus)?.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
+}
+
+const send = async (path, body) => {
+  const r = signedOut(await fetch(path, { method: "POST", headers: headers({ "X-Riskmon": "1", "Content-Type": "application/json" }), body: JSON.stringify(body) }));
+  if (!r.ok) { alert((await r.json().catch(() => ({}))).error || "That could not be saved."); return false; }
+  return true;
+};
+const RANK = { score: 0, confirm: 1, deny: 2 };
+
+// a list a person edits in place: each change is saved at once, and the page is redrawn from what the daemon then has
+function listEditor(values, placeholder, save, fixed = []) {
+  const input = el("input", { type: "text", placeholder, "aria-label": placeholder, onkeydown: e => { if (e.key === "Enter") add(); } });
+  const add = async () => { const v = input.value.trim(); if (v && await save([...values, v])) policyView(); };
+  return el("div", {},
+    fixed.length ? el("div", { class: "tags" }, fixed.map(v => el("span", { class: "tag fixed", title: "from the baseline" }, v))) : null,
+    el("div", { class: "tags" }, values.map(v => el("span", { class: "tag" }, v, el("button", { class: "x", title: "Remove", "aria-label": "Remove " + v, onclick: async () => { if (await save(values.filter(x => x !== v))) policyView(); } }, "×"))),
+      !values.length && !fixed.length ? el("span", { class: "muted" }, "None") : null),
+    el("div", { class: "addrow" }, input, el("button", { class: "btn", onclick: add }, "Add")));
+}
+
+function repoRow(pr, put) {
+  const input = el("input", { type: "text", value: pr.repo, placeholder: "github.com/owner/name", "aria-label": "Repository of " + pr.name, style: "flex:2 1 260px", onkeydown: e => { if (e.key === "Enter") save(); } });
+  const save = async () => { if (await put({ repo: input.value })) policyView(); };
+  return el("div", { class: "addrow" }, input, el("button", { class: "btn", onclick: save }, "Save"));
+}
+
+function handlingTable(rules, chosen, floor, save) {
+  return el("div", { class: "scroll" }, el("table", {}, el("tbody", {}, rules.map(rule => {
+    const least = RANK[floor[rule] || "score"], now = Math.max(least, RANK[chosen[rule] || "score"]);
+    const select = el("select", { "aria-label": RULES[rule], onchange: async e => { if (await save({ ...chosen, [rule]: e.target.value })) policyView(); } },
+      Object.entries(HANDLING).map(([value, [word]]) => el("option", { value, selected: RANK[value] === now, disabled: RANK[value] < least }, word)));
+    return el("tr", {}, el("td", {}, RULES[rule] || rule), el("td", {}, select));
+  }))));
+}
+
+async function policyView() {
+  let data;
+  try { data = await get("/api/policy"); } catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The policy could not be loaded.")); return; }
+  const p = data.baseline, y = window.scrollY;
+  const base = body => send("/api/policy/baseline", body);
+  // with the testing area installed, a policy can be tried against the scenarios before any real session meets it
+  const tryIt = (source, what) => overview && overview.test_area && !(me && me.test_runs === false) ? el("p", { style: "margin:16px 0 0" }, el("a", { class: "btn", style: "text-decoration:none;display:inline-block", href: "#/test/run-new?policy=" + encodeURIComponent(source) }, "Test " + what),
+    el("span", { class: "muted small", style: "margin-left:10px" }, "Run the scenarios with these limits and see what they stop and what they let through.")) : null;
+  const t = p.thresholds;
+  const readOnly = me && me.role !== "admin" ? el("div", { class: "banner info" }, "You can see the policy. Changing it takes an administrator.") : null;
+  const baseline = el("section", { class: "panel" }, el("h2", {}, "Baseline"),
+    el("p", { class: "muted", style: "margin:0 0 14px" }, "Every session follows this, in every project. Changes take effect on each session's next action."),
+    el("h3", {}, "Hosts an agent may contact"), listEditor(p.allow_hosts, "api.example.org", v => base({ allow_hosts: v })),
+    el("h3", { style: "margin-top:18px" }, "Protected paths"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "Credentials and the like. Reading one counts, not only changing it."),
+    listEditor(p.protected_paths, "~/.ssh", v => base({ protected_paths: v })),
+    el("h3", { style: "margin-top:18px" }, "Read-only paths"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "Relative paths are taken from each session's workspace. Reading and running what is there is unaffected."),
+    listEditor(p.read_only, "vendor", v => base({ read_only: v })),
+    el("h3", { style: "margin-top:18px" }, "When nobody is watching"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "What happens to each kind of action in an unattended run. A refusal of this kind tells the agent which limit it met."),
+    handlingTable(data.rules, p.unattended, {}, v => base({ unattended: v })),
+    el("h3", { style: "margin-top:18px" }, "When someone is at the keyboard"), handlingTable(data.rules, p.attended, {}, v => base({ attended: v })),
+    el("h3", { style: "margin-top:18px" }, "When the score alone decides"), el("div", { class: "kv" },
+      el("div", { class: "k" }, "Below " + t.ask), el("div", {}, "allowed"), el("div", { class: "k" }, `${t.ask} to ${t.deny - 1}`), el("div", {}, "a person is asked, or the action is held when nobody is there"),
+      el("div", { class: "k" }, `${t.deny} to ${t.suspend - 1}`), el("div", {}, "refused"), el("div", { class: "k" }, t.suspend + " and above"), el("div", {}, "the session is suspended"),
+      el("div", { class: "k" }, "Also suspended after"), el("div", {}, `${p.suspend_after_denies} refusals, or ${p.max_holds} actions held in an unattended run`)),
+    el("p", { class: "muted small", style: "margin:12px 0 0" }, "Saved in ", el("code", {}, data.file), ". The thresholds are changed there."), tryIt("baseline", "this baseline"));
+  const project = pr => {
+    const put = patch => send("/api/policy/projects", { ...pr, ...patch });
+    return el("section", { class: "panel" }, el("div", { style: "display:flex;gap:12px;align-items:baseline;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, pr.name), el("span", { class: "mono muted" }, [pr.repo, pr.root].filter(Boolean).join("  ·  ")),
+        el("button", { class: "btn", style: "margin-left:auto", onclick: async () => { if (confirm(`Remove the project "${pr.name}"? Sessions there go back to the baseline alone.`) && await send("/api/policy/projects/delete", { name: pr.name })) policyView(); } }, "Remove project")),
+      el("p", { class: "muted", style: "margin:6px 0 14px" }, "Applies on top of the baseline to sessions started ", pr.repo ? "in a checkout of this repository, on any machine" : "", pr.repo && pr.root ? ", or " : "", pr.root ? "in this directory or below it" : "", "."),
+      el("h3", {}, "Repository"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "The clone address, or host/owner/name. Sessions are matched by it wherever the checkout is."), repoRow(pr, put),
+      el("h3", { style: "margin-top:18px" }, "More hosts this project may contact"), listEditor(pr.allow_hosts, "api.internal.example", v => put({ allow_hosts: v })),
+      el("h3", { style: "margin-top:18px" }, "More directories it may use, outside its own"), listEditor(pr.extra_dirs, "/data/shared", v => put({ extra_dirs: v })),
+      el("h3", { style: "margin-top:18px" }, "Read-only paths in this project"), listEditor(pr.read_only, "vendor", v => put({ read_only: v }), p.read_only),
+      el("h3", { style: "margin-top:18px" }, "Protected paths in this project"), listEditor(pr.protected_paths, "secrets", v => put({ protected_paths: v })),
+      el("h3", { style: "margin-top:18px" }, "Stricter handling when nobody is watching"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "A project can be stricter than the baseline, never looser. Choices below the baseline's are greyed out."),
+      handlingTable(data.rules, pr.unattended, p.unattended, v => put({ unattended: v })),
+      el("h3", { style: "margin-top:18px" }, "Stricter handling when someone is at the keyboard"), handlingTable(data.rules, pr.attended, p.attended, v => put({ attended: v })), tryIt("project:" + pr.name, "this project's policy"));
+  };
+  const name = el("input", { type: "text", placeholder: "Name, such as fx-tools", "aria-label": "Project name" }), repo = el("input", { type: "text", placeholder: "github.com/owner/name", "aria-label": "Project repository", style: "flex:2 1 220px" }),
+    root = el("input", { type: "text", placeholder: "or /full/path/to/a/directory", "aria-label": "Project directory", style: "flex:2 1 220px" });
+  const create = el("section", { class: "panel" }, el("h3", {}, "Add a project"), el("p", { class: "muted", style: "margin:0 0 10px" }, "Give a repository or a directory its own scope: the hosts it needs, the paths that must not change there. A repository is recognised on every machine; a directory only where that path exists."),
+    el("div", { class: "addrow" }, name, repo, root, el("button", { class: "btn primary", onclick: async () => { if (await send("/api/policy/projects", { name: name.value, repo: repo.value, root: root.value })) policyView(); } }, "Add project")));
+  main.replaceChildren(...[readOnly, baseline, el("h3", { style: "margin:24px 0 10px" }, `Projects · ${data.projects.length}`), ...data.projects.map(project), readOnly ? null : create].filter(Boolean));
+  // the daemon refuses these from anyone but an administrator, so they are not offered either
+  if (readOnly) { main.querySelectorAll("button, .addrow, a.btn").forEach(n => (n.matches("a") ? n.parentNode : n).remove()); main.querySelectorAll("select").forEach(s => { s.disabled = true; }); }
+  window.scrollTo(0, y);
+}
+
+function chrome() {
+  if (!overview) return;
+  document.querySelector("nav").hidden = false;
+  const health = document.getElementById("health");
+  const n = overview.notices || {};
+  health.replaceChildren(overview.judge ? "Model judge: on" : `Model judge: off (${overview.judge_note || "not installed"})`,
+    n.webhooks ? ` · notices: ${n.webhooks} webhook${n.webhooks > 1 ? "s" : ""}` + (n.last_error ? `, last failure ${n.last_error}` : "") : " · notices: off",
+    ...(me && me.team ? [` · signed in as ${me.name} (${me.role}) · `, el("a", { href: "#", onclick: e => { e.preventDefault(); token = ""; try { sessionStorage.removeItem("riskmon_token"); } catch (x) {} signIn(""); } }, "sign out")] : []));
+  const protect = document.getElementById("nav-protect");
+  protect.replaceChildren("Protect", overview.pending ? el("span", { class: "badge", title: "waiting for your review" }, overview.pending) : "");
+  document.getElementById("nav-test").hidden = !overview.test_area;
+}
+
+async function route() {
+  clearInterval(timer);
+  if (!me) { try { me = await get("/api/me"); } catch (e) { if (e.message === "signed out") return; me = { team: false, role: "admin" }; } }
+  if (!overview) { try { overview = await get("/api/overview"); } catch (e) { if (e.message === "signed out") return; overview = { test_area: false, pending: 0 }; } chrome(); }
+  let hash = location.hash || "";
+  if (!hash || hash === "#/") { location.replace(overview.sessions_all || !overview.test_area ? "#/protect" : "#/protect"); hash = "#/protect"; }
+  const area = hash.startsWith("#/test") ? "test" : hash.startsWith("#/policy") ? "policy" : "protect";
+  for (const name of ["protect", "test", "policy"]) document.getElementById("nav-" + name).classList.toggle("on", name === area);
+  if (area === "test") {
+    if (!overview.test_area) { main.replaceChildren(el("p", { class: "empty" }, "The testing area is not installed with this monitor.")); return; }
+    if (!testMounted) {
+      document.getElementById("test-css").disabled = false;
+      await new Promise((ok, no) => { const s = el("script", { src: "../app.js" }); s.onload = ok; s.onerror = no; document.head.append(s); });
+      testMounted = true;
+      return window.TestArea.mount(main, { base: "../", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false, fixed: !!window.RISKMON_DEMO });
+    }
+    if (!main.querySelector(".subnav")) return window.TestArea.mount(main, { base: "../", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false, fixed: !!window.RISKMON_DEMO });
+    return window.TestArea.route();
+  }
+  if (area === "policy") return policyView();
+  const session = hash.match(/^#\/protect\/session\/([^?]+)(?:\?e=(\d+))?/);
+  if (session) return sessionView(decodeURIComponent(session[1]), session[2]);
+  await protectView();
+  timer = setInterval(() => { if ((location.hash || "#/protect") === "#/protect" && !document.querySelector("button:focus, select:focus")) protectView(); }, 5000);
+}
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

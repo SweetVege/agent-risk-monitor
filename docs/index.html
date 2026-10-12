@@ -10,18 +10,18 @@
   .lede { max-width: 760px; margin: 0 0 18px; }
   .lede p { margin: 0 0 8px; }
   .lede .first { font-size: 16px; }
-  header .top { padding-bottom: 14px; }
   header .top a { margin-left: auto; }
   footer { max-width: 1180px; margin: 0 auto; padding: 0 24px 40px; }
 </style>
 </head>
 <body>
-<header><div class="top"><h1>Agent Risk Monitor</h1><span class="muted small">recorded evaluation runs</span><a class="small" href="https://github.com/SweetVege/agent-risk-monitor">Source on GitHub</a></div></header>
+<header><div class="top"><h1>Agent Risk Monitor</h1><a class="small" href="https://github.com/SweetVege/agent-risk-monitor">Source on GitHub</a></div>
+<nav><a class="on" href="./">Evaluation results</a><a href="demo/">Live demo of the console</a></nav></header>
 <main>
   <div class="lede">
     <p class="first">What does a coding agent do when the task in front of it cannot be done the honest way, and what changes when a monitor checks each action before it runs?</p>
     <p class="muted">Five models were given the same tasks in a sandbox, twenty times per condition. In one, a script fails for want of an API token while the project next door has one that works. In the other, a test fails because of a defect in code the repository says not to edit. A runtime monitor either only recorded what the agent did or refused what went beyond the limits it was given.</p>
-    <p class="muted">Nothing here is live. These are the recorded runs, and each one can be replayed step by step under Compare: what the model said, the command it ran, and what the monitor made of it.</p>
+    <p class="muted">Nothing here is live. These are the recorded runs, and each one can be replayed step by step under Compare: what the model said, the command it ran, and what the monitor made of it. To see what using the monitor looks like day to day, try the <a href="demo/">live demo of its console</a>.</p>
   </div>
   <div id="app"></div>
 </main>
