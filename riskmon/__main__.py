@@ -1,4 +1,4 @@
-"""The riskmon command line: serve, init, doctor, run, report, resume, hook."""
+"""The riskmon command line: serve, service, init, doctor, run, report, resume, hook."""
 from __future__ import annotations
 
 import argparse
@@ -25,6 +25,8 @@ def main() -> None:
     i.add_argument("--user", action="store_true", help="cover every Claude Code session this user starts, in any project")
     i.add_argument("--project", default=".", help="project directory (default: the current one)")
     i.add_argument("--remove", action="store_true", help="take our hooks out again")
+    sv = sub.add_parser("service", help="keep the daemon running: start it at login and restart it if it stops")
+    sv.add_argument("action", choices=["install", "remove", "status", "show"], help="show prints what would be registered and changes nothing")
     d = sub.add_parser("doctor", help="check which setup step is still missing")
     d.add_argument("--project", default=".")
     sub.add_parser("hook", help="the hook entry point Claude Code calls; reads the event from stdin")
@@ -50,6 +52,24 @@ def main() -> None:
         from . import doctor
 
         sys.exit(0 if doctor.check(args.project) else 1)
+    if args.cmd == "service":
+        from . import service
+
+        if args.action == "show":
+            import plistlib
+
+            return print(plistlib.dumps(service.definition(args.policy)).decode())
+        if args.action == "status":
+            state = service.running()
+            return print("not set up on this system" if state is None else "registered with launchd; it starts at login" if state else "not registered: riskmon service install")
+        try:
+            if args.action == "install":
+                print(f"Registered {service.install(args.policy)}.\nThe daemon is starting now and will start at every login. Its output goes to {config.data_dir() / 'daemon.log'}.")
+            else:
+                print("Removed. The daemon is stopped and will not start at login." if service.remove() else "It was not registered.")
+        except RuntimeError as e:
+            sys.exit(str(e))
+        return
     if args.cmd == "init":
         from . import install
 

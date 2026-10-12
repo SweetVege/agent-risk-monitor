@@ -681,6 +681,20 @@ class SetupTest(unittest.TestCase):
             data = json.loads(Path(settings).read_text())
             self.assertEqual((data["model"], list(data["hooks"]), install.installed_events(user=True)), ("opus", ["PreToolUse"], []))
 
+    def test_the_login_service_runs_the_daemon_and_holds_no_credential(self):
+        from unittest import mock
+
+        from riskmon import service
+
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-placeholder", "RISKMON_HOME": self.dir}):
+            spec = service.definition()
+        self.assertEqual(spec["ProgramArguments"][-3:], ["-m", "riskmon", "serve"])
+        self.assertTrue(spec["RunAtLoad"] and spec["KeepAlive"])
+        self.assertEqual(spec["EnvironmentVariables"]["RISKMON_HOME"], self.dir)
+        self.assertNotIn("placeholder", str(spec))  # a key in the terminal must not end up in a file launchd reads
+        with_policy = service.definition(os.path.join(self.dir, "policy.json"))["ProgramArguments"]
+        self.assertEqual(with_policy[with_policy.index("--policy") + 1], os.path.join(os.path.realpath(self.dir), "policy.json"))
+
     def test_init_merges_into_existing_settings_and_is_repeatable(self):
         from riskmon import install
 

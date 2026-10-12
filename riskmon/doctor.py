@@ -35,7 +35,13 @@ def check(project: str = ".") -> bool:
         line(True, f"running on 127.0.0.1:{cfg['port']}")
     except OSError:
         health = None
-        line(False, f"not running on 127.0.0.1:{cfg['port']}", "start it: riskmon serve")
+        line(False, f"not running on 127.0.0.1:{cfg['port']}", "start it: riskmon serve, or keep it running with: riskmon service install")
+    from . import service
+
+    kept = service.running()
+    if kept is not None:
+        line(True if kept else None, "starts at login and is restarted if it stops" if kept else "not kept running: it stops when its terminal closes or the machine restarts",
+             "to keep it running: riskmon service install")
 
     print("Protection")
     everywhere = [e for e in install.EVENTS if e not in install.installed_events(user=True)]

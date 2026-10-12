@@ -117,7 +117,11 @@ def make_handler(engine: Engine):
 
 
 def serve(engine: Engine, port: int) -> None:
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine))
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine))
+    except OSError as e:
+        # usually a daemon that is already running, by hand or as the login service
+        raise SystemExit(f"cannot listen on 127.0.0.1:{port}: {e.strerror}. Is the daemon already running? Check with: riskmon doctor")
     judge = engine.judge
     judge.check()
     print(f"riskmon listening on http://127.0.0.1:{port}")

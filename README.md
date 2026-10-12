@@ -18,22 +18,29 @@ pip install git+https://github.com/SweetVege/agent-risk-monitor
 
 Or, from a checkout, run `pip install .`
 
-**2. Start the daemon**
+**2. Keep the daemon running**
+
+```bash
+riskmon service install
+```
+
+On macOS this registers the daemon with launchd for the current user: it starts now, starts at every login, and is restarted if it stops. It needs no administrator rights and writes no credential into the service definition. `riskmon service show` prints what would be registered without changing anything, and `riskmon service remove` undoes it.
+
+The daemon listens on this machine only, and the console is at http://127.0.0.1:8787. To run it by hand instead, in a terminal you leave open:
 
 ```bash
 riskmon serve
 ```
 
-It listens on this machine only. The console is at http://127.0.0.1:8787. Leave this terminal open.
-
-**3. Install the hooks in the project you want monitored**
+**3. Turn protection on**
 
 ```bash
-cd your-project
-riskmon init
+riskmon init --user
 ```
 
-This writes four hooks into the project's `.claude/settings.json` and leaves existing settings and other hooks alone. Claude Code sessions **started after this** in the project are monitored. `riskmon init --remove` takes the hooks out.
+This writes four hooks into your Claude Code settings and leaves everything else there alone. Every Claude Code session you start **after this** is monitored, in any project, with nothing to set up per project. `riskmon init --user --remove` takes the hooks out.
+
+To cover one project only, run `riskmon init` inside it; the hooks then go into that project's `.claude/settings.json`.
 
 **4. Check**
 
@@ -41,9 +48,9 @@ This writes four hooks into the project's `.claude/settings.json` and leaves exi
 riskmon doctor
 ```
 
-It lists the state of the daemon and the hooks, and says what to do about anything missing.
+It lists the state of the daemon and the protection, and says what to do about anything missing.
 
-When the daemon is not running, the hook denies actions such as network access and reads of sensitive files and lets the rest through. Start the daemon before working in a project that has the hooks.
+When the daemon is not running, the hook denies actions such as network access and reads of sensitive files and lets the rest through. That is why step 2 comes before step 3: protection that covers every session should not depend on remembering to start something.
 
 ## Everyday use
 
@@ -81,7 +88,7 @@ The policy and the audit data live in `~/.riskmon/`; set `RISKMON_HOME` to move 
 | `riskmon/engine.py` | Ties the tiers together and maps the result to a verdict |
 | `riskmon/server.py`, `dashboard.html` | The local daemon and the console |
 | `riskmon/report.py` | The activity report |
-| `riskmon/install.py`, `doctor.py` | `riskmon init` and `riskmon doctor` |
+| `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
 | `riskmon/default_policy.json` | The default policy: thresholds, host allowlist, protected paths, command classes, scope policy |
 | `evals/` | Eval replay and experiment records |
