@@ -34,6 +34,7 @@ class ActionEvent:
     repo: str = ""  # the repository the session's directory belongs to, as `host/owner/name`, and where it is checked out
     repo_root: str = ""
     project: str = ""  # a project named by whoever launched the run, in place of matching one
+    wait: int = 0  # seconds the hook on that machine will pause the run for a reviewer if this action is held
 
 
 _FILE_READ = {"Read", "Glob", "Grep", "NotebookRead"}
@@ -104,4 +105,5 @@ def from_claude_code(payload: dict) -> ActionEvent:
         repo=str(payload.get("riskmon_repo", ""))[:300],
         repo_root=str(payload.get("riskmon_root", ""))[:1000],
         project=str(payload.get("riskmon_project", ""))[:80],
+        wait=max(0, min(int(payload["riskmon_wait"]), 3600)) if isinstance(payload.get("riskmon_wait"), int) else 0,
     )

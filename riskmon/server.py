@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import access, config, insights, projects, report
+from . import access, config, insights, notify, projects, report
 from .engine import Engine
 from .events import from_claude_code
 from .optional import drift
@@ -24,6 +25,9 @@ def policy_view(cfg: dict) -> dict:
         "allow_hosts": cfg["allow_hosts"], "protected_paths": cfg["protected_paths"], "read_only": scope.get("read_only", []), "extra_dirs": scope.get("extra_dirs", []),
         "attended": scope.get("attended", {}), "unattended": scope.get("unattended", {}),
     }
+
+
+REVIEW_POLL = 8  # seconds one ReviewWait request is kept open; below the hook's own HTTP timeout
 
 
 def make_handler(engine: Engine, extension=None, policy_file=None, team: bool = False, test_runs: bool = True):
@@ -104,7 +108,8 @@ def make_handler(engine: Engine, extension=None, policy_file=None, team: bool = 
                 return self._send(200, report.build(engine.store, sid, engine.cfg))
             if url.path == "/api/overview":
                 return self._send(200, {**insights.overview(engine.store, **narrow), "judge": engine.judge.available, "judge_note": engine.judge.unavailable or engine.judge.last_error,
-                                        "test_area": extension is not None})
+                                        "test_area": extension is not None,
+                                        "notices": {"webhooks": len(notify.load()["webhooks"]), "failed": getattr(engine.notify, "failed", 0), "last_error": getattr(engine.notify, "last_error", "")}})
             if url.path == "/api/pending":
                 return self._send(200, insights.pending(engine.store, **narrow))
             if url.path == "/api/incidents":
@@ -160,8 +165,20 @@ def make_handler(engine: Engine, extension=None, policy_file=None, team: bool = 
                 if name == "PreToolUse":
                     d = engine.evaluate(from_claude_code(payload))
                     return self._send(
-                        200, {"verdict": d.verdict, "event_id": d.event_id, "score": d.score, "reason": d.reason(), "agent_note": d.agent_note}
+                        200, {"verdict": d.verdict, "event_id": d.event_id, "score": d.score, "reason": d.reason(), "agent_note": d.agent_note, "wait": d.wait}
                     )
+                if name == "ReviewWait":
+                    # the hook of a paused run asks whether a person has decided its held action; answer when one has, or shortly
+                    row = engine.store.get_event(payload["event_id"]) if isinstance(payload.get("event_id"), int) else None
+                    mine = row is not None and row["session_id"] == str(payload.get("session_id")) and (
+                        not team or engine.store.load_state(row["session_id"]).machine == caller.name)  # a machine learns about its own sessions only
+                    if not mine:
+                        return self._send(404, {"error": "no such held action"})
+                    left = payload.get("riskmon_left")
+                    end = time.time() + max(0.0, min(float(left) if isinstance(left, (int, float)) else 0.0, REVIEW_POLL))
+                    while not (review := engine.store.get_event(row["id"])["detail"].get("review", "")) and time.time() < end:
+                        time.sleep(0.25)
+                    return self._send(200, {"review": review})
                 if name == "UserPromptSubmit":
                     prompt = payload.get("prompt") or payload.get("prompt_text") or ""
                     st = engine.record_task(str(payload.get("session_id", "unknown")), str(prompt))
@@ -230,6 +247,7 @@ def serve(engine: Engine, port: int, policy_file=None, listen: str = "127.0.0.1"
     from .optional import test_area
 
     engine.projects = projects.load()
+    engine.notify = notify.Notifier()
     shared = listen not in ("127.0.0.1", "localhost", "::1")
     team = shared or access.in_use()
     if shared and not any(m.get("role") == "admin" for m in access.load()["members"]):

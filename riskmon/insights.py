@@ -55,7 +55,7 @@ def _rows(store: Store, where: str, args: tuple, limit: int, scope: tuple = ("",
         tasks = state.get("tasks") or []
         out.append({
             "id": r["id"], "session_id": r["session_id"], "ts": r["ts"], "tool": r["tool"], "target": r["target"][:600], "verdict": r["verdict"], "score": r["score"], "tier": r["tier"],
-            "would": detail.get("would", ""), "kind": kind_of(detail), "review": detail.get("review", ""), "review_by": detail.get("review_by", ""),
+            "would": detail.get("would", ""), "kind": kind_of(detail), "review": detail.get("review", ""), "review_by": detail.get("review_by", ""), "wait_until": detail.get("wait_until", 0),
             "machine": state.get("machine", ""), "user": state.get("user", ""), "project": state.get("project", ""),
             "reason": "; ".join(detail.get("combos", []) + detail.get("findings", [])), "judge": detail.get("rationale", ""),
             "task": tasks[-1][:200] if tasks else "", "unattended": bool(state.get("unattended")), "suspended": bool(state.get("suspended")),

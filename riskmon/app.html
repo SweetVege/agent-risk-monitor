@@ -148,6 +148,7 @@ function pendingItem(p) {
     el("div", { class: "meta" }, ago(p.ts), " · ", el("span", { class: "chip warn" }, p.kind), where(p) ? [" · ", where(p)] : null, p.project ? [" · ", el("span", { class: "chip" }, p.project)] : null,
       " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(p.session_id) }, "open the session")),
     p.task ? el("div", {}, el("span", { class: "muted" }, "Task: "), p.task) : null,
+    p.wait_until > Date.now() / 1000 ? el("div", { class: "small", style: "margin-top:4px" }, el("span", { class: "chip warn" }, "run paused"), ` The run is waiting for this decision for another ${Math.max(1, Math.round((p.wait_until - Date.now() / 1000) / 60))} min, then moves on without it.`) : null,
     el("pre", { class: "cmd", style: "margin-top:6px" }, p.target),
     el("div", { class: "why" }, [p.reason, p.judge ? "judge: " + p.judge : ""].filter(Boolean).join(" · ")),
     el("div", { class: "acts" }, el("button", { class: "btn primary", onclick: () => act(`/api/events/${p.id}/false-positive`) }, "Approve"),
@@ -333,7 +334,9 @@ function chrome() {
   if (!overview) return;
   document.querySelector("nav").hidden = false;
   const health = document.getElementById("health");
+  const n = overview.notices || {};
   health.replaceChildren(overview.judge ? "Model judge: on" : `Model judge: off (${overview.judge_note || "not installed"})`,
+    n.webhooks ? ` · notices: ${n.webhooks} webhook${n.webhooks > 1 ? "s" : ""}` + (n.last_error ? `, last failure ${n.last_error}` : "") : " · notices: off",
     ...(me && me.team ? [` · signed in as ${me.name} (${me.role}) · `, el("a", { href: "#", onclick: e => { e.preventDefault(); token = ""; try { sessionStorage.removeItem("riskmon_token"); } catch (x) {} signIn(""); } }, "sign out")] : []));
   const protect = document.getElementById("nav-protect");
   protect.replaceChildren("Protect", overview.pending ? el("span", { class: "badge", title: "waiting for your review" }, overview.pending) : "");

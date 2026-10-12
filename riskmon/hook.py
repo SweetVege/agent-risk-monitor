@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.request
 
 from . import config, rules
@@ -52,6 +53,11 @@ def refusal(verdict: str, event_id, note: str = "") -> str:
     """What the agent is told when an action does not run. `note` is a scope limit the operator declared, if that is what stopped it."""
     if verdict == "suspend":
         return "This session is suspended by the risk monitor. Stop and tell the user to review it."
+    if verdict == "reviewed":
+        return (
+            f"A reviewer looked at this action and kept it refused (event #{event_id}). " + (note + " " if note else "")
+            + "Do not retry it or look for another way to do the same thing. If the task can be done without it, do that; otherwise stop and report."
+        )
     if verdict == "hold":
         return (
             f"Held for human review by the risk monitor (event #{event_id}). " + (note + " " if note else "")
@@ -78,6 +84,29 @@ def pre_tool_output(verdict: str, event_id, reason: str, note: str = "") -> dict
     else:
         decision, text = "deny", refusal(verdict, event_id, note)
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": text}}
+
+
+def own_wait(argv: list[str]) -> int:
+    """How long this machine's hook may pause a run for a reviewer, as `riskmon init --wait-for-review` wrote it into the hook command."""
+    if "--wait" in argv[:-1] and argv[argv.index("--wait") + 1].isdigit():
+        return int(argv[argv.index("--wait") + 1])
+    return 0
+
+
+def wait_for_review(payload: dict, event_id, seconds: int, port: int) -> str:
+    """Pause until a person decides the held action or the time is up. Returns `false_positive` (approved), `dismissed`, or `` for no decision."""
+    end = time.time() + seconds
+    while (left := end - time.time()) > 0:
+        asked = time.time()
+        try:
+            got = ask_daemon({"hook_event_name": "ReviewWait", "session_id": payload.get("session_id"), "event_id": event_id, "riskmon_left": left}, port)
+        except Exception:
+            return ""  # the daemon went away; the action stays held
+        if got.get("review"):
+            return str(got["review"])
+        if time.time() - asked < 1:
+            time.sleep(min(1, max(0, end - time.time())))  # an answer that came straight back must not turn this into a busy loop
+    return ""
 
 
 def fallback(payload: dict, cfg: dict) -> dict | None:
@@ -109,10 +138,16 @@ def main() -> None:
     # which project's policy applies follows the repository, or a name the launcher gave
     payload["riskmon_repo"], payload["riskmon_root"] = repo.find(str(payload.get("cwd") or os.getcwd()))
     payload["riskmon_project"] = os.environ.get("RISKMON_PROJECT", "")
+    payload["riskmon_wait"] = own_wait(sys.argv)
     try:
         resp = ask_daemon(payload, cfg["port"])
         if name == "PreToolUse":
-            out = pre_tool_output(resp.get("verdict", "allow"), resp.get("event_id"), resp.get("reason", ""), resp.get("agent_note", ""))
+            verdict = resp.get("verdict", "allow")
+            if verdict == "hold" and resp.get("wait"):
+                # this machine is set up to pause an unattended run for a reviewer instead of moving on at once
+                review = wait_for_review(payload, resp.get("event_id"), int(resp["wait"]), cfg["port"])
+                verdict = {"false_positive": "allow", "dismissed": "reviewed"}.get(review, "hold")
+            out = pre_tool_output(verdict, resp.get("event_id"), resp.get("reason", ""), resp.get("agent_note", ""))
         elif name == "UserPromptSubmit" and resp.get("suspended"):
             sid = payload.get("session_id")
             out = {

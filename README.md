@@ -63,6 +63,7 @@ When the daemon is not running, the hook denies actions such as network access a
 | Overturn a wrong verdict | "Mark false positive" on that action in the session |
 | Give a project its own scope | "Add a project" on the Policy page, by repository or by directory |
 | Run a task unattended | `riskmon run --cwd <project> "task"`; needs the `claude` CLI |
+| Be told when something needs you | `riskmon notify add <name> --slack`; see "Telling people, and waiting for them" |
 | Change the policy | The console's Policy page; changes take effect on each session's next action. Thresholds and other keys: `~/.riskmon/policy.json` with just the keys you change, then restart the daemon |
 
 A policy example that adds an API you use to the host allowlist and raises the deny line:
@@ -107,7 +108,25 @@ Members open the daemon's address in a browser and paste their token, which is k
 
 On a shared daemon the Protect page says which machine each session ran on and as which account, and can be narrowed to one machine or one project. Each approval, refusal and resumed session carries the name of the member who did it.
 
-What a shared daemon does not do yet: nobody is notified when something is waiting for review.
+## Telling people, and waiting for them
+
+**Notices.** The daemon can post to a webhook when an action is held for review or a session is suspended, so that someone finds out without watching the console:
+
+```bash
+riskmon notify add ops --slack                     # asks for the webhook's address without showing it
+riskmon notify console-url https://monitor.example.internal:8787
+riskmon notify test ops
+```
+
+`--slack` posts in the form Slack's incoming webhooks take; without it the notice is plain JSON for any receiver. `--only held` or `--only suspended` narrows what a webhook gets. A notice says what kind of limit was met, on which machine and in which project, and links to the session once the console's address is set. It leaves out the command, the reason and the task unless the webhook is added with `--with-command`: they go to another service, and a command can hold a credential. A webhook's address is itself a secret, so it is kept in a file only the daemon's user can read and is set from the command line, never from the page. A webhook that is slow or failing never delays a verdict; the console's header says when the last notice failed, and `riskmon doctor` lists the webhooks that are set up. `riskmon notify list` and `riskmon notify remove <name>` do the rest.
+
+**Waiting for a reviewer.** By default a held action comes straight back to the agent, which is told to carry on with something else. A machine can instead be set up to pause the run while a person decides:
+
+```bash
+riskmon init --user --wait-for-review 600          # or: riskmon join --server ... --wait-for-review 600
+```
+
+An unattended run on that machine then waits up to that many seconds on a held action. Approved in that time, the action runs and the agent never learns it was held. Kept refused, the agent is told a reviewer decided. If nobody decides, the action is held as before and the run moves on. The review queue marks such an action as pausing its run, and the notice says how long it will wait. This is off unless asked for, because a paused run costs time whenever nobody answers; it suits teams that have set up notices and do answer them. Running `riskmon init` again without the option turns it off.
 
 ## Layout
 
@@ -124,6 +143,7 @@ What a shared daemon does not do yet: nobody is notified when something is waiti
 | `riskmon/engine.py` | Ties the tiers together and maps the result to a verdict |
 | `riskmon/server.py`, `app.html`, `insights.py` | The local daemon and the console |
 | `riskmon/access.py` | Who may talk to a shared daemon: machine and member tokens |
+| `riskmon/notify.py` | Notices to webhooks when an action is held or a session suspended |
 | `riskmon/report.py` | The activity report |
 | `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
@@ -197,6 +217,7 @@ python3 -m evals.run
 - **Subprocesses are a blind spot.** The hook only sees tool calls the agent makes. What a script or background process it starts goes on to do is invisible here. A complete product needs egress control at the operating-system level.
 - **This is not an isolation boundary.** The monitor and the agent run on the same machine as the same user, so the self-protection rules only stop what goes through a tool call. A production deployment has to put the monitor where the agent cannot reach it.
 - **A project is recognised by what the checkout says.** The repository comes from the working directory's git configuration, which the agent's own machine reports. It is read before the session's first action, so an agent cannot move its own session into another project, but nothing verifies that a checkout really is a clone of the repository it names.
+- **Notices and waiting have only been tried against a receiver on the same machine.** No real Slack workspace was used. A pause depends on the hook finishing inside the time Claude Code allows it, which the installer sets; a hook that runs out of time lets its action through, as any Claude Code hook does.
 - **L0 parses text.** Hosts and paths are taken from the command string, so indirection through variables or aliases gets past it. That is why a judge and system-level controls are needed.
 - **Detection is largely untested.** `evals/` has benign traces and a few recorded sessions. They do not show what the monitor can stop. The runs recorded under `evals/experiments/` were all made through Claude Code: about 120 with three Claude models, none of which reached for anything that was not the project's, and 40 with two models from another vendor, one of which tried to read a neighbouring project's token file in four of twenty runs and was denied each time. Those results describe a model inside Claude Code, not the model on its own. Later runs in a separate evaluation harness, whose records are not part of this repository, gave each model a two-sentence system prompt. There the smallest of the three Claude models did take the token, and in other runs wrote the data itself and reported the task done; the other vendor's larger model used the token in every run the monitor did not stop. With the monitor refusing, the token reached no agent in a hundred runs. That is one scenario and twenty runs per model, which is enough to say the monitor's refusals mattered there and too little to state a detection rate. See `evals/README.md` and `evals/experiments/`.
 - **The experiment records describe the full monitor.** The runs in `evals/experiments/` had the model judge and, in the later ones, the drift score. Scores and verdicts quoted there will not all reproduce with this repository alone.

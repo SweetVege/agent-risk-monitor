@@ -1,4 +1,4 @@
-"""The riskmon command line: serve, service, team, join, leave, init, doctor, run, report, resume, hook."""
+"""The riskmon command line: serve, service, team, notify, join, leave, init, doctor, run, report, resume, hook."""
 from __future__ import annotations
 
 import argparse
@@ -28,6 +28,7 @@ def main() -> None:
     tm.add_argument("--role", choices=["admin", "reviewer"], default="reviewer", help="for a member: a reviewer approves held actions; an admin also changes the policy")
     jn = sub.add_parser("join", help="send this machine's sessions to a team's daemon, and turn protection on")
     jn.add_argument("--server", required=True, help="the daemon's address, such as https://monitor.example.internal:8787")
+    jn.add_argument("--wait-for-review", type=int, default=0, metavar="SECONDS", help="pause an unattended run up to this many seconds when an action is held, so a reviewer can decide it; off by default")
     jn.add_argument("--token-file", help="read the machine token from this file; without it you are asked, and it is not shown as you type")
     sub.add_parser("leave", help="stop sending this machine's sessions to a team's daemon")
     r = sub.add_parser("resume", help="resume a suspended session")
@@ -36,11 +37,20 @@ def main() -> None:
     i.add_argument("--user", action="store_true", help="cover every Claude Code session this user starts, in any project")
     i.add_argument("--project", default=".", help="project directory (default: the current one)")
     i.add_argument("--remove", action="store_true", help="take our hooks out again")
+    i.add_argument("--wait-for-review", type=int, default=0, metavar="SECONDS", help="pause an unattended run up to this many seconds when an action is held, so a reviewer can decide it; off by default")
+    nt = sub.add_parser("notify", help="post to a webhook when an action is held for review or a session is suspended")
+    nt.add_argument("action", choices=["add", "remove", "list", "test", "console-url"])
+    nt.add_argument("name", nargs="?", help="a name for the webhook; for console-url, the address people open the console at")
+    nt.add_argument("--slack", action="store_true", help="post in the form Slack's incoming webhooks take; otherwise plain JSON")
+    nt.add_argument("--url-file", help="read the webhook's address from this file; without it you are asked, and it is not shown as you type")
+    nt.add_argument("--only", choices=["held", "suspended"], help="post for this kind of event only")
+    nt.add_argument("--with-command", action="store_true", help="include the command, the reason and the task; left out by default, since they go to another service")
     sv = sub.add_parser("service", help="keep the daemon running: start it at login and restart it if it stops")
     sv.add_argument("action", choices=["install", "remove", "status", "show"], help="show prints what would be registered and changes nothing")
     d = sub.add_parser("doctor", help="check which setup step is still missing")
     d.add_argument("--project", default=".")
-    sub.add_parser("hook", help="the hook entry point Claude Code calls; reads the event from stdin")
+    hk = sub.add_parser("hook", help="the hook entry point Claude Code calls; reads the event from stdin")
+    hk.add_argument("--wait", type=int, default=0, help=argparse.SUPPRESS)  # written by init --wait-for-review; the hook reads it itself
     sub.add_parser("hook-config", help="print the hooks configuration without writing it")
     rp = sub.add_parser("report", help="print a session's activity report: the files, hosts and programs it touched")
     rp.add_argument("session_id")
@@ -86,6 +96,43 @@ def main() -> None:
         print("  " + token + "\n")
         print("On that machine:  riskmon join --server <this daemon's address>" if kind == "machine" else "They paste it into the console's sign-in page.")
         return print("Restart the daemon if it was serving this machine only: from now on every request needs a token.")
+    if args.cmd == "notify":
+        import getpass
+
+        from . import notify
+
+        cfg = notify.load()
+        try:
+            if args.action == "list":
+                print("\n".join(notify.shown(h) for h in cfg["webhooks"]) or "No webhooks. Add one with: riskmon notify add <name> [--slack]")
+                return print(f"Notices link to the console at {cfg['console_url']}" if cfg["console_url"] else "Notices carry no link: set one with  riskmon notify console-url <address>")
+            if args.action == "console-url":
+                notify.set_console_url(args.name or "")
+                return print(f"Notices will link to {args.name}." if args.name else "Notices will carry no link.")
+            if not args.name and args.action != "test":
+                sys.exit("give the webhook's name")
+            if args.action == "add":
+                url = Path(args.url_file).read_text(encoding="utf-8").strip() if args.url_file else getpass.getpass("Webhook address (not shown): ").strip()
+                notify.add(args.name, url, "slack" if args.slack else "json", (args.only,) if args.only else notify.EVENTS, args.with_command)
+                return print(f"Added. {notify.shown(next(h for h in notify.load()['webhooks'] if h['name'] == args.name))}\n"
+                             f"Its address is kept in {notify.path()}, readable by this user only. The running daemon uses it from the next notice on.\n"
+                             f"Try it with: riskmon notify test {args.name}")
+            if args.action == "remove":
+                return print("Removed." if notify.remove(args.name) else "There is no webhook by that name.")
+            chosen = [h for h in cfg["webhooks"] if not args.name or h["name"] == args.name]
+            if not chosen:
+                sys.exit("no webhook to test")
+            failed = False
+            for h in chosen:
+                try:
+                    notify.post(h, {"event": "test", "kind": "", "machine": "", "user": "", "project": "", "ts": 0}, cfg["console_url"])
+                    print(f"{h['name']}: sent")
+                except Exception as e:
+                    failed = True
+                    print(f"{h['name']}: failed ({type(e).__name__})")
+            sys.exit(1 if failed else 0)
+        except ValueError as e:
+            sys.exit(str(e))
     if args.cmd in ("join", "leave"):
         import getpass
         import urllib.error
@@ -113,7 +160,7 @@ def main() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps({"server": server, "token": token}) + "\n", encoding="utf-8")
         target.chmod(0o600)
-        path, _ = install.apply(user=True)
+        path, _ = install.apply(user=True, wait=args.wait_for_review)
         print(f"Joined {server}. Every Claude Code session this user starts is now checked there.\n"
               f"The token is kept in {target}, readable by this user only; the hooks are in {path}.\n"
               "If the daemon cannot be reached, ordinary work goes through and anything beyond the default policy is refused.")
@@ -139,7 +186,7 @@ def main() -> None:
     if args.cmd == "init":
         from . import install
 
-        path, touched = install.apply(args.project, args.remove, args.user)
+        path, touched = install.apply(args.project, args.remove, args.user, args.wait_for_review)
         if not touched:
             print(f"{path} needs no change: " + ("our hooks are not in it." if args.remove else "the hooks are already installed."))
         else:

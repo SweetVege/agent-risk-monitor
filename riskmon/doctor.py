@@ -9,7 +9,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from . import config, install
+from . import config, install, notify
 
 
 def check(project: str = ".") -> bool:
@@ -67,6 +67,18 @@ def check(project: str = ".") -> bool:
              "to cover every session: riskmon init --user")
         line(not missing, f"on for the project {Path(project).expanduser().resolve()}" if not missing else f"off for the project {Path(project).expanduser().resolve()}"
              + (f": missing {', '.join(missing)}" if have else ""), "to cover this project only: riskmon init")
+
+    waits = install.installed_wait(user=True) or install.installed_wait(project)
+    if waits:
+        line(True, f"an unattended run pauses up to {waits} s for a reviewer when an action is held")
+
+    if not joined:  # on a machine that has joined a team's daemon, notices are that daemon's business
+        print("Notices (optional)")
+        hooks = notify.load()
+        line(None if not hooks["webhooks"] else True, "; ".join(notify.shown(h) for h in hooks["webhooks"]) if hooks["webhooks"] else "nobody is told when something is waiting for review",
+             "to post to a webhook: riskmon notify add <name> [--slack]")
+        if hooks["webhooks"] and not hooks["console_url"]:
+            line(None, "notices carry no link to the console", "riskmon notify console-url <the address people open the console at>")
 
     print("Unattended runs (optional)")
     cli = shutil.which("claude") or (str(Path.home() / ".local/bin/claude") if (Path.home() / ".local/bin/claude").exists() else "")

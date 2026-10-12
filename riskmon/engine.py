@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from . import projects, rules, scope, state, transcript
+from . import insights, projects, rules, scope, state, transcript
 from .events import ActionEvent
 from .optional import Judge, drift
 from .store import Store
@@ -29,6 +29,7 @@ class Decision:
     judge_failed: bool = False  # the judge should have been asked but could not be (timeout, rate limit, ...)
     would: str = ""  # in observe mode, the verdict this action would have received
     agent_note: str = ""  # the one kind of reason that may go back to the agent: a scope limit its operator declared
+    wait: int = 0  # for a held action: seconds the run is paused for a reviewer's decision
 
     def reason(self) -> str:
         """The explanation for a person. Never send it back to the monitored agent."""
@@ -45,6 +46,7 @@ class Engine:
         self.store = store or Store()
         self.judge = judge if judge is not None else Judge(cfg)
         self._locks: dict = defaultdict(threading.Lock)
+        self.notify = None  # called with a notice when an action is held or a session suspended; the daemon sets it
 
     def _verdict(self, score: int) -> str:
         t = self.cfg["thresholds"]
@@ -162,6 +164,7 @@ class Engine:
             said = transcript.said_before(ev.transcript_path, ev.tool_use_id)
 
             carried = None  # what this step adds to the carried score; actions while suspended do not update state
+            was_suspended = st.suspended
             if st.suspended:
                 d = Decision("suspend", 100, dict(l0.scores), "L0", findings=["session is suspended, waiting for a person to resume it"])
             elif state.action_key(ev) in st.approved and "monitor_tamper" not in l0.facets:
@@ -236,6 +239,8 @@ class Engine:
                     d.verdict = "suspend"
                     st.suspended, st.suspended_reason = True, d.reason()
 
+            if d.verdict == "hold":
+                d.wait = ev.wait
             d.latency_ms = round((time.perf_counter() - t0) * 1000, 2)
             d.event_id = self.store.log_event(
                 {
@@ -266,8 +271,17 @@ class Engine:
                         "described": ev.described,
                         "said": said,
                         "said_at": "pre" if said else "",
+                        "wait_until": ev.ts + d.wait if d.wait else 0,
                     },
                 }
             )
             self.store.save_state(st, ev.ts)
+            if self.notify and (d.verdict == "hold" or (st.suspended and not was_suspended)):
+                try:
+                    self.notify({
+                        "event": "held" if d.verdict == "hold" else "suspended", "kind": insights.kind_of({"facets": sorted(l0.facets), "rationale": d.rationale}),
+                        "event_id": d.event_id, "session_id": ev.session_id, "machine": st.machine, "user": st.user, "project": st.project, "wait": d.wait,
+                        "target": f"{ev.tool}: {ev.target}", "reason": d.reason(), "task": st.tasks[-1] if st.tasks else "", "ts": ev.ts})
+                except Exception:
+                    pass  # telling people is best effort; it never changes or delays a verdict
             return d

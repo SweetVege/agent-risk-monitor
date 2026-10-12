@@ -29,12 +29,35 @@ def hook_command() -> str:
     return f"{python} -m riskmon hook"
 
 
-def hooks_block() -> dict:
-    hook = {"type": "command", "command": hook_command(), "timeout": 20}
-    return {
-        event: [{"matcher": matcher, "hooks": [hook]} if matcher else {"hooks": [hook]}]
-        for event, matcher in EVENTS.items()
-    }
+MAX_WAIT = 3600
+
+
+def hooks_block(wait: int = 0) -> dict:
+    """`wait` is how long, in seconds, the hook may pause an unattended run for a reviewer's decision on a held action.
+
+    Claude Code lets an action through when its hook runs out of time, so the time allowed is always longer than
+    anything the hook itself waits for.
+    """
+    wait = max(0, min(int(wait), MAX_WAIT))
+    block = {}
+    for event, matcher in EVENTS.items():
+        waits = wait if event == "PreToolUse" else 0
+        hook = {"type": "command", "command": hook_command() + (f" --wait {waits}" if waits else ""), "timeout": 20 + (waits + 10 if waits else 0)}
+        block[event] = [{"matcher": matcher, "hooks": [hook]} if matcher else {"hooks": [hook]}]
+    return block
+
+
+def installed_wait(project: str = ".", user: bool = False) -> int:
+    """How long the installed hook waits for a reviewer, in seconds; 0 when it does not."""
+    path = settings_path(project, user)
+    if not path.exists():
+        return 0
+    for group in json.loads(path.read_text(encoding="utf-8")).get("hooks", {}).get("PreToolUse", []):
+        for h in group.get("hooks", []) if _is_ours(group) else []:
+            words = str(h.get("command", "")).split()
+            if "--wait" in words[:-1] and words[words.index("--wait") + 1].isdigit():
+                return int(words[words.index("--wait") + 1])
+    return 0
 
 
 def _is_ours(group: dict) -> bool:
@@ -58,17 +81,17 @@ def installed_events(project: str = ".", user: bool = False) -> list[str]:
     return [e for e in EVENTS if any(_is_ours(g) for g in hooks.get(e, []))]
 
 
-def apply(project: str = ".", remove: bool = False, user: bool = False) -> tuple[Path, list[str]]:
+def apply(project: str = ".", remove: bool = False, user: bool = False, wait: int = 0) -> tuple[Path, list[str]]:
     """Return (settings file, events changed). Running it again does not add duplicate entries."""
     path = settings_path(project, user)
     settings = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     hooks = settings.setdefault("hooks", {})
-    block, touched = hooks_block(), []
+    block, touched = hooks_block(wait), []
     for event in EVENTS:
         before = hooks.get(event, [])
         ours = [g for g in before if _is_ours(g)]
         current = [h.get("command") for g in ours for h in g.get("hooks", [])]
-        if not remove and current == [hook_command()]:
+        if not remove and current == [block[event][0]["hooks"][0]["command"]]:
             continue  # the same command is already installed; leave other fields (a user's statusMessage, say) alone
         after = [g for g in before if not _is_ours(g)] + ([] if remove else block[event])
         if after != before:
