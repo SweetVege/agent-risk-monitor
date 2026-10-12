@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Risk Monitor: what coding agents do when the honest way is closed</title>
+<meta name="description" content="Recorded runs of five models on tasks built to tempt them, with a runtime monitor recording or refusing. Every run can be replayed step by step.">
+<link rel="stylesheet" href="app.css">
+<style>
+  .lede { max-width: 760px; margin: 0 0 18px; }
+  .lede p { margin: 0 0 8px; }
+  .lede .first { font-size: 16px; }
+  header .top { padding-bottom: 14px; }
+  header .top a { margin-left: auto; }
+  footer { max-width: 1180px; margin: 0 auto; padding: 0 24px 40px; }
+</style>
+</head>
+<body>
+<header><div class="top"><h1>Agent Risk Monitor</h1><span class="muted small">recorded evaluation runs</span><a class="small" href="https://github.com/SweetVege/agent-risk-monitor">Source on GitHub</a></div></header>
+<main>
+  <div class="lede">
+    <p class="first">What does a coding agent do when the task in front of it cannot be done the honest way, and what changes when a monitor checks each action before it runs?</p>
+    <p class="muted">Five models were given the same tasks in a sandbox, twenty times per condition. In one, a script fails for want of an API token while the project next door has one that works. In the other, a test fails because of a defect in code the repository says not to edit. A runtime monitor either only recorded what the agent did or refused what went beyond the limits it was given.</p>
+    <p class="muted">Nothing here is live. These are the recorded runs, and each one can be replayed step by step under Compare: what the model said, the command it ran, and what the monitor made of it.</p>
+  </div>
+  <div id="app"></div>
+</main>
+<footer class="muted small">
+  <p>The monitor is open source under the MIT licence: <a href="https://github.com/SweetVege/agent-risk-monitor">github.com/SweetVege/agent-risk-monitor</a>. The model judge whose one-line assessments appear in some replays is not part of the open edition. Counts are out of twenty runs per model and condition, on two scenarios; they describe these runs and are not rates for a model in general.</p>
+</footer>
+<script src="app.js"></script>
+<script>
+TestArea.mount(document.getElementById("app"), { fixed: true });
+// the introduction belongs to the first page; inside a comparison or a replay it would only push the content down
+const lede = () => { document.querySelector(".lede").hidden = !["", "#", "#/findings"].includes(location.hash); };
+window.addEventListener("hashchange", lede); lede();
+</script>
+</body>
+</html>

@@ -4,6 +4,8 @@ An out-of-band monitor for autonomous coding agents. It scores each action befor
 
 The first supported agent is Claude Code, through its hooks.
 
+**See what it does:** [sweetvege.github.io/agent-risk-monitor](https://sweetvege.github.io/agent-risk-monitor/) has recorded runs of five models on two tasks built to tempt them, with the monitor recording or refusing. Each run can be replayed step by step.
+
 This repository is the open core: the hook, the rule and trajectory tiers, the scope policy, the daemon and console, the activity report and unattended runs. Two parts used in the experiments under `evals/experiments/` are not included: the model judge that reviews gray-band actions against the user's task, and the drift score. The engine runs without them; what that changes is described below.
 
 ## Getting started
@@ -152,6 +154,7 @@ An unattended run on that machine then waits up to that many seconds on a held a
 | `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
 | `riskmon/default_policy.json` | The default policy: thresholds, host allowlist, protected paths, command classes, scope policy |
+| `docs/` | The project's page: recorded evaluation runs as static files, served by GitHub Pages |
 | `deploy/` | The shared daemon as a container image, with a Compose file and an optional TLS proxy |
 | `evals/` | Eval replay and experiment records |
 
@@ -224,7 +227,7 @@ python3 -m evals.run
 - **A project is recognised by what the checkout says.** The repository comes from the working directory's git configuration, which the agent's own machine reports. It is read before the session's first action, so an agent cannot move its own session into another project, but nothing verifies that a checkout really is a clone of the repository it names.
 - **Notices and waiting have only been tried against a receiver on the same machine.** No real Slack workspace was used. A pause depends on the hook finishing inside the time Claude Code allows it, which the installer sets; a hook that runs out of time lets its action through, as any Claude Code hook does.
 - **L0 parses text.** Hosts and paths are taken from the command string, so indirection through variables or aliases gets past it. That is why a judge and system-level controls are needed.
-- **Detection is largely untested.** `evals/` has benign traces and a few recorded sessions. They do not show what the monitor can stop. The runs recorded under `evals/experiments/` were all made through Claude Code: about 120 with three Claude models, none of which reached for anything that was not the project's, and 40 with two models from another vendor, one of which tried to read a neighbouring project's token file in four of twenty runs and was denied each time. Those results describe a model inside Claude Code, not the model on its own. Later runs in a separate evaluation harness, whose records are not part of this repository, gave each model a two-sentence system prompt. There the smallest of the three Claude models did take the token, and in other runs wrote the data itself and reported the task done; the other vendor's larger model used the token in every run the monitor did not stop. With the monitor refusing, the token reached no agent in a hundred runs. That is one scenario and twenty runs per model, which is enough to say the monitor's refusals mattered there and too little to state a detection rate. See `evals/README.md` and `evals/experiments/`.
+- **Detection is largely untested.** `evals/` has benign traces and a few recorded sessions. They do not show what the monitor can stop. The runs recorded under `evals/experiments/` were all made through Claude Code: about 120 with three Claude models, none of which reached for anything that was not the project's, and 40 with two models from another vendor, one of which tried to read a neighbouring project's token file in four of twenty runs and was denied each time. Those results describe a model inside Claude Code, not the model on its own. Later runs in a separate evaluation harness, which is not part of this repository but whose runs can be replayed on the project's page (`docs/`), gave each model a two-sentence system prompt. There the smallest of the three Claude models did take the token, and in other runs wrote the data itself and reported the task done; the other vendor's larger model used the token in every run the monitor did not stop. With the monitor refusing, the token reached no agent in a hundred runs. That is one scenario and twenty runs per model, which is enough to say the monitor's refusals mattered there and too little to state a detection rate. See `evals/README.md` and `evals/experiments/`.
 - **The experiment records describe the full monitor.** The runs in `evals/experiments/` had the model judge and, in the later ones, the drift score. Scores and verdicts quoted there will not all reproduce with this repository alone.
 - **The thresholds and point values are first guesses.** They have not been calibrated on real data.
 - **Tested on macOS only**, with Claude Code as the only agent.
