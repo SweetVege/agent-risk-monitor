@@ -236,6 +236,7 @@ def _outside_paths(progs: list, cwd: str, cfg: dict) -> list[tuple[str, bool]]:
 _LEAVES_ALONE = _READERS | {"sed", "awk", "sort", "uniq", "cut", "tr", "nl", "tac", "od", "xxd", "cmp", "md5sum", "sha256sum", "shasum", "cd",
                             "pytest", "py.test", "python", "python3", "mypy", "ruff", "flake8", "pylint", "node", "bash", "sh", "du", "tree"}
 _IN_PLACE = re.compile(r"^-(i|-in-place)")
+_WRITES_IN_CODE = re.compile(r"""['"][wax]b?\+?['"]|write_text|write_bytes|\.write\(|unlink|os\.remove|os\.rename|os\.replace|shutil\.|rmtree|truncate|subprocess|os\.system""")
 _REDIRECT_TARGET = re.compile(r"(?<![0-9&>])>>?\s*(?!&)([\"']?)([^\s;|&<>\"']+)\1")
 
 
@@ -279,8 +280,11 @@ def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[st
         reads = name in _LEAVES_ALONE or (name == "git" and args and args[0] in _GIT_READS)
         if name in ("sed", "sort") and any(_IN_PLACE.match(a) or a == "-o" for a in args):
             reads = False
-        if name == "find" and {"-delete", "-exec", "-execdir"} & set(args):
-            reads = False
+        if name == "find":
+            # what find is told to run on each file decides it: `-exec sed -n 1,200p {} ;` reads, `-exec rm {} ;` does not
+            ran = [os.path.basename(args[i + 1]) for i, a in enumerate(args[:-1]) if a in ("-exec", "-execdir", "-ok")]
+            if "-delete" in args or any(r not in _LEAVES_ALONE or (r in ("sed", "sort") and any(_IN_PLACE.match(a) or a == "-o" for a in args)) for r in ran):
+                reads = False
         if not reads:
             hit += inside
     body = _HEREDOC.sub("", command)
@@ -290,11 +294,16 @@ def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[st
             seen = True
             hit.append(q)
     if not hit and not seen:
-        text = _expand(command)
-        named = [r for r in roots if r in text or (cwd and os.path.relpath(r, cwd) + "/" in text)]
-        inline = _HEREDOC.search(command) or any(n in cfg["commands"]["interpreter"] and _INLINE_FLAGS & set(a) for n, a, _ in progs)
-        if named and inline:
-            hit += named
+        # Code handed to an interpreter, inline or as a heredoc. The rule layer cannot follow it, so it looks for the
+        # two things a change needs: a string that is a path under a read-only root, and something that writes.
+        # A mention in a comment, or a file that is only opened and read, is neither.
+        feeds = any(n in cfg["commands"]["interpreter"] and (_INLINE_FLAGS & set(a) or _HEREDOC.search(command)) for n, a, _ in progs)
+        if feeds and _WRITES_IN_CODE.search(command):
+            # one pass per kind of quote: a -c argument is quoted one way and the paths inside it the other
+            for literal in re.findall(r"'([^'\n]{1,300})'", command) + re.findall(r'"([^"\n]{1,300})"', command):
+                q = resolve(literal, here)
+                if _under(q, roots) and ("/" in literal or "." in os.path.basename(literal)):
+                    hit.append(q)
     return sorted(set(hit))
 
 

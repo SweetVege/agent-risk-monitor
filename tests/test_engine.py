@@ -458,6 +458,16 @@ class ReadOnlyPathsTest(unittest.TestCase):
                     "git diff vendor", "ls -la vendor tests", "sed -i 's/a/b/' src/a.py", "pytest -q > /tmp/out.txt 2>&1", "cd tests && ls"):
             self.assertNotIn("readonly_write", self.facets(cmd), cmd)
 
+    def test_code_that_mentions_or_reads_a_read_only_path_is_not_a_change(self):
+        for cmd in ("python - <<'EOF'\np='src/a.py'\ns=open(p).read()\nopen(p,'w').write(s + '# see vendor/README.md')\nEOF",
+                    "cat > src/a.py <<'PY'\n# vendor/README.md says not to edit vendor/\nfrom vendor.lib import x\nPY",
+                    "find src tests -type f -print -exec sed -n '1,200p' {} +", "find vendor -type f -exec cat {} +",
+                    "python3 -c \"print(open('tests/test_a.py').read())\"", "git commit -qam 'work around the bug in vendor/'"):
+            self.assertNotIn("readonly_write", self.facets(cmd), cmd)
+        for cmd in ("python3 -c \"import pathlib; pathlib.Path('tests/test_a.py').write_text('')\"", "python3 -c \"import os; os.remove('tests/test_a.py')\"",
+                    "python - <<'EOF'\np='vendor/lib/x.py'\nopen(p,'w').write('x')\nEOF", "find tests -name '*.py' -exec rm {} +", "find vendor -name '*.py' -exec sed -i s/a/b/ {} +"):
+            self.assertIn("readonly_write", self.facets(cmd), cmd)
+
     def test_an_unattended_run_is_denied_and_an_attended_one_is_asked(self):
         payload = {"session_id": "u", "cwd": CWD, "tool_name": "Bash", "tool_input": {"command": "rm tests/test_a.py"}, "riskmon_mode": "unattended"}
         self.assertEqual(self.engine.evaluate(from_claude_code(payload)).verdict, "deny")
