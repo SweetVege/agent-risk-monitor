@@ -42,3 +42,20 @@ def decide(facets: set, unattended: bool, cfg: dict) -> tuple[str, list[str]]:
     outcome = "is not allowed" if strictest == "deny" else "needs a person's approval"
     where = " in an unattended run" if unattended else ""
     return strictest, [f"scope policy: {label}{where} {outcome}" for action, label in hits if action == strictest]
+
+
+def for_agent(facets: set, unattended: bool, cfg: dict, notes: dict) -> str:
+    """What the agent may be told when the scope policy stops an action: which limit it met, and on what.
+
+    The scope is something whoever runs the agent set in plain view, so naming it gives nothing away
+    and lets the agent look for a way to do the task inside it. Reasons that come from scoring or
+    from the judge are never passed on.
+    """
+    policy = cfg["scope"]["unattended" if unattended else "attended"]
+    strictest = decide(facets, unattended, cfg)[0]
+    parts = []
+    for rule, (facet, label) in RULES.items():
+        if facet in facets and policy.get(rule, "score") == strictest != "score":
+            detail = "; ".join(notes.get(facet, [])[:3])
+            parts.append(f"{label} ({detail})" if detail else label)
+    return "The scope set for this run does not allow " + ", or ".join(parts) + "." if parts else ""

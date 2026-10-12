@@ -123,7 +123,7 @@ A few fixed constraints:
 - The carried score is a fuzzy signal. At most it pushes an action to the top of the gray band, for the judge or a person to decide. Denials and suspensions come only from explicit rules or the denial count.
 - An action the judge reviewed is carried at the judge's conclusion, so one it found reasonable does not weigh on later actions.
 - Being off-task, on its own, escalates to a confirmation at most.
-- The reason sent back to the agent for a denial carries no rule detail. The detail goes to the audit log and the console only.
+- The reason sent back to the agent for a denial carries no rule detail, with one exception: when the scope policy stops an action, the agent is told which declared limit it met and on what, so that it can look for a way to do the task inside it. Reasons that come from scoring, from the judge or from the monitor protecting itself go to the audit log and the console only.
 - When the daemon is unavailable, the hook runs L0 locally, denies anything over the gray threshold and allows the rest.
 - When a gray-band action should have gone to a judge and could not (a timeout, a rate limit), it goes to a person instead of counting as reviewed. This does not apply when no judge is installed; the rule scores decide then.
 

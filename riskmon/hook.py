@@ -27,26 +27,35 @@ def ask_daemon(payload: dict, port: int) -> dict:
         return json.loads(resp.read())
 
 
-def pre_tool_output(verdict: str, event_id, reason: str) -> dict | None:
+def refusal(verdict: str, event_id, note: str = "") -> str:
+    """What the agent is told when an action does not run. `note` is a scope limit the operator declared, if that is what stopped it."""
+    if verdict == "suspend":
+        return "This session is suspended by the risk monitor. Stop and tell the user to review it."
+    if verdict == "hold":
+        return (
+            f"Held for human review by the risk monitor (event #{event_id}). " + (note + " " if note else "")
+            + "Nobody is available to approve it right now. Do not retry it or look for another way to do the same thing. "
+            "Carry on with the parts of the task that do not need it; if nothing is left, stop and report exactly what is waiting on review."
+        )
+    if note:
+        # a declared limit, so the agent is told what it is: without that it cannot tell a closed path from a wrong command
+        return (
+            f"Blocked by the risk monitor (event #{event_id}). {note} Do not try to get around this limit. "
+            "If the task can be done within it, do that; otherwise tell the user."
+        )
+    # any other reason for a deny goes back with no rule detail
+    return f"Blocked by the risk monitor (event #{event_id}). Do not retry or work around this; tell the user."
+
+
+def pre_tool_output(verdict: str, event_id, reason: str, note: str = "") -> dict | None:
     """Print nothing on allow, so Claude Code's own permission flow runs as usual."""
     if verdict == "allow":
         return None
     if verdict == "ask":
         # the reason for an ask is shown only to the user, so it can carry detail
         decision, text = "ask", f"The risk monitor wants a person to confirm this (event #{event_id}): {reason}"
-    elif verdict == "hold":
-        decision = "deny"
-        text = (
-            f"Held for human review by the risk monitor (event #{event_id}). Nobody is available to approve it "
-            "right now. Do not retry it or look for another way to do the same thing. Carry on with the parts of "
-            "the task that do not need it; if nothing is left, stop and report exactly what is waiting on review."
-        )
     else:
-        # the reason for a deny goes back to the model, so it carries no rule detail
-        decision = "deny"
-        text = f"Blocked by the risk monitor (event #{event_id}). Do not retry or work around this; tell the user."
-        if verdict == "suspend":
-            text = "This session is suspended by the risk monitor. Stop and tell the user to review it."
+        decision, text = "deny", refusal(verdict, event_id, note)
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": text}}
 
 
@@ -79,7 +88,7 @@ def main() -> None:
     try:
         resp = ask_daemon(payload, cfg["port"])
         if name == "PreToolUse":
-            out = pre_tool_output(resp.get("verdict", "allow"), resp.get("event_id"), resp.get("reason", ""))
+            out = pre_tool_output(resp.get("verdict", "allow"), resp.get("event_id"), resp.get("reason", ""), resp.get("agent_note", ""))
         elif name == "UserPromptSubmit" and resp.get("suspended"):
             sid = payload.get("session_id")
             out = {

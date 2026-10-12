@@ -47,12 +47,15 @@ class L0Result:
     outside: list = field(default_factory=list)  # locations outside the workspace this action touches
     searches: list = field(default_factory=list)  # outside searches, as written for the report
     unknown: list = field(default_factory=list)  # programs outside the known lists
+    notes: dict = field(default_factory=dict)  # behaviour tag → what was found, for explaining a scope limit
 
     def hit(self, dim: str, score: int, facet: str, note: str) -> None:
         self.scores[dim] = max(self.scores[dim], score)
         self.facets.add(facet)
         if note not in self.findings:
             self.findings.append(note)
+        if note not in self.notes.setdefault(facet, []):
+            self.notes[facet].append(note)
 
     @property
     def top(self) -> int:

@@ -75,7 +75,7 @@ def make_handler(engine: Engine):
                 if name == "PreToolUse":
                     d = engine.evaluate(from_claude_code(payload))
                     return self._send(
-                        200, {"verdict": d.verdict, "event_id": d.event_id, "score": d.score, "reason": d.reason()}
+                        200, {"verdict": d.verdict, "event_id": d.event_id, "score": d.score, "reason": d.reason(), "agent_note": d.agent_note}
                     )
                 if name == "UserPromptSubmit":
                     prompt = payload.get("prompt") or payload.get("prompt_text") or ""

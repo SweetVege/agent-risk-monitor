@@ -28,6 +28,7 @@ class Decision:
     judge_tokens: tuple = (0, 0)
     judge_failed: bool = False  # the judge should have been asked but could not be (timeout, rate limit, ...)
     would: str = ""  # in observe mode, the verdict this action would have received
+    agent_note: str = ""  # the one kind of reason that may go back to the agent: a scope limit its operator declared
 
     def reason(self) -> str:
         """The explanation for a person. Never send it back to the monitored agent."""
@@ -175,7 +176,12 @@ class Engine:
                     d.verdict = "ask"
                     d.findings.append("the judge gave no answer, so a person has to confirm")
                 if forced != "score":
+                    # Not when the score alone would have denied it: then the scope limit is not what stopped the
+                    # action, and naming it would point the agent at the wrong thing and away from what the score saw.
+                    by_scope = d.verdict in ("allow", "ask")
                     d.tier, d.findings = "SCOPE", why + d.findings
+                    if by_scope and not l0.facets & {"monitor_tamper", "monitor_probe"}:
+                        d.agent_note = scope.for_agent(l0.facets, st.unattended, cfg, l0.notes)
                     if forced == "deny" and d.verdict in ("allow", "ask"):
                         d.verdict = "deny"
                     elif forced == "confirm" and d.verdict == "allow":
@@ -229,6 +235,7 @@ class Engine:
                         "judge_tokens": d.judge_tokens,
                         "judge_failed": d.judge_failed,
                         "would": d.would,
+                        "agent_note": d.agent_note,
                         "drift": st.drift,
                         "facets": sorted(l0.facets),
                         "carried": carried,
