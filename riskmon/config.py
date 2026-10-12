@@ -45,14 +45,21 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
-def load(path: str | os.PathLike | None = None) -> dict:
-    """The default policy plus the changes in `path` (default: policy.json in the home directory, which may not exist)."""
+def load(path: str | os.PathLike | None = None, agent_home: str | None = None) -> dict:
+    """The default policy plus the changes in `path` (default: policy.json in the home directory, which may not exist).
+
+    `agent_home` is the agent's home directory when it is not this machine's, as when the agent runs in a container:
+    `~` in the policy's paths then means that directory.
+    """
     cfg = json.loads(DEFAULT_POLICY.read_text(encoding="utf-8"))
     override = Path(path) if path else user_policy_path()
     if path or override.exists():
         cfg = _merge(cfg, json.loads(override.read_text(encoding="utf-8")))
-    cfg["protected_paths"] = [os.path.expanduser(x) for x in cfg["protected_paths"]]
-    cfg["scope"]["extra_dirs"] = [os.path.expanduser(x) for x in cfg["scope"]["extra_dirs"]]
+    def expand(x: str) -> str:
+        return agent_home + x[1:] if agent_home and (x == "~" or x.startswith("~/")) else os.path.expanduser(x)
+
+    cfg["protected_paths"] = [expand(x) for x in cfg["protected_paths"]]
+    cfg["scope"]["extra_dirs"] = [expand(x) for x in cfg["scope"]["extra_dirs"]]
     # where the monitor's own code, policy and audit data live; the self-protection rules need these
     cfg["monitor_paths"] = sorted({str(home()), str(SOURCE if in_source_tree() else PACKAGE)})
     return cfg

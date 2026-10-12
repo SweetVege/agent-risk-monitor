@@ -183,6 +183,14 @@ class Engine:
                 if st.unattended and d.verdict == "ask":
                     # nobody can answer a prompt. Hold the action for review and let the agent do something else
                     d.verdict = "hold"
+                key = state.action_key(ev)
+                if key in st.held and d.verdict != "suspend":
+                    # The agent was told this is waiting for a person and not to retry it. Holding it again would give
+                    # it several more attempts before anything else happened; a retry is refused and counts as a denial.
+                    d.verdict = "deny"
+                    d.findings.append("repeats an action that is waiting for review")
+                elif d.verdict == "hold" and not st.observe:
+                    st.held = (st.held + [key])[-state.MAX_APPROVED:]
                 if st.observe and d.verdict == "hold":
                     # for research: see how far it goes when nothing stops it. Only holds are relaxed; denials and suspensions still apply
                     d.would, d.verdict = "hold", "allow"

@@ -350,6 +350,18 @@ class UnattendedTest(unittest.TestCase):
         verdicts = [self.run_bash(f"curl https://unlisted.example.org/{i}").verdict for i in range(5)]
         self.assertEqual(verdicts, ["hold"] * 4 + ["suspend"])
 
+    def test_retrying_a_held_action_is_refused_and_counts_as_a_denial(self):
+        first = self.run_bash("curl https://unlisted.example.org/a")
+        again = self.run_bash("curl https://unlisted.example.org/a")
+        st = self.engine.store.load_state("s1")
+        self.assertEqual((first.verdict, again.verdict, st.holds, st.denies), ("hold", "deny", 1, 1))
+        self.assertIn("waiting for review", again.reason())
+        # a different action that needs review is still only held
+        self.assertEqual(self.run_bash("curl https://unlisted.example.org/b").verdict, "hold")
+        # and three retries end the run
+        verdicts = [self.run_bash("curl https://unlisted.example.org/a").verdict for _ in range(2)]
+        self.assertEqual(verdicts, ["deny", "suspend"])
+
     def test_an_approved_hold_passes_when_retried(self):
         d = self.run_bash("curl https://unlisted.example.org/a")
         self.engine.mark_false_positive(d.event_id)

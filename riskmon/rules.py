@@ -6,6 +6,7 @@ default_policy.json): the host allowlist, protected paths and command classes.
 """
 from __future__ import annotations
 
+import contextvars
 import fnmatch
 import ipaddress
 import os
@@ -79,8 +80,17 @@ def _hosts_in(text: str, logins: bool = False) -> list[str]:
     return sorted({h.lower() for h in hosts if h})
 
 
+# The agent's home directory. It is the monitor's own unless the agent runs somewhere else, such as a container,
+# in which case whoever feeds events in sets this to the home directory there.
+AGENT_HOME: contextvars.ContextVar[str | None] = contextvars.ContextVar("riskmon_agent_home", default=None)
+
+
+def _home() -> str:
+    return AGENT_HOME.get() or os.path.expanduser("~")
+
+
 def _expand(text: str) -> str:
-    home = os.path.expanduser("~")
+    home = _home()
     text = text.replace("${HOME}", home).replace("$HOME", home)
     return re.sub(r"(^|[\s'\"=:])~(?=/|\s|$)", lambda m: m.group(1) + home, text)
 
@@ -126,7 +136,7 @@ def _hook_config_users(progs: list, cwd: str) -> tuple[list, bool]:
     too. Arguments are resolved against the directory the command has cd'ed to and matched as a
     shell would expand them, against the project's and the user's hook config.
     """
-    dirs = [os.path.join(base, ".claude") for base in (cwd or "/", os.path.expanduser("~"))]
+    dirs = [os.path.join(base, ".claude") for base in (cwd or "/", _home())]
     files = [os.path.join(d, f) for d in dirs for f in _HOOK_FILES]
     users, inside, here = [], False, cwd or "/"
 
@@ -136,7 +146,7 @@ def _hook_config_users(progs: list, cwd: str) -> tuple[list, bool]:
 
     for name, args, _ in progs:
         if name == "cd":
-            here = resolve(args[0]) if args and not args[0].startswith("-") else os.path.expanduser("~")
+            here = resolve(args[0]) if args and not args[0].startswith("-") else _home()
             inside = inside or here in dirs
             continue
         for arg in args:
@@ -174,7 +184,7 @@ _PATH_ARG = re.compile(r"^(~|/|\.\./|\.\.$)")
 
 def _region(path: str) -> str:
     """Map a path to a coarse location, to count how many places outside the workspace a session has touched."""
-    home = os.path.expanduser("~")
+    home = _home()
     if path == home or path.startswith(home + "/"):
         rest = path[len(home) :].strip("/").split("/")
         if len(rest) == 1 and rest[0].startswith("."):
@@ -198,7 +208,7 @@ def _outside_paths(progs: list, cwd: str, cfg: dict) -> list[tuple[str, bool]]:
     out, here = [], cwd
     for name, args, _ in progs:
         if name == "cd":
-            here = resolve(args[0], here) if args and not args[0].startswith("-") else os.path.expanduser("~")
+            here = resolve(args[0], here) if args and not args[0].startswith("-") else _home()
             if not _under(here, skip):
                 out.append((here, False))
             continue
@@ -339,7 +349,7 @@ def _assess_shell(ev: ActionEvent, cfg: dict, res: L0Result) -> None:
 
     # widening scope: the command reaches outside the workspace. File tools always had their paths checked; paths in commands did not
     if ev.cwd:
-        home = os.path.expanduser("~")
+        home = _home()
         for path, searching in _outside_paths(progs, ev.cwd, cfg):
             res.outside.append(_region(path))
             if not searching:
