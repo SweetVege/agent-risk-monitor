@@ -89,6 +89,8 @@ class Store:
                     "project": st.get("project", ""),
                     "machine": st.get("machine", ""),
                     "user": st.get("user", ""),
+                    "repo": st.get("repo", ""),
+                    "resumed_by": st.get("resumed_by", []),
                     "observe": st.get("observe", False),
                     "suspended": st["suspended"],
                     "suspended_reason": st["suspended_reason"],

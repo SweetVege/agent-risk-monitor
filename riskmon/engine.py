@@ -64,9 +64,11 @@ class Engine:
                 self.store.save_state(st, time.time())
             return st
 
-    def resume(self, session_id: str) -> None:
+    def resume(self, session_id: str, by: str = "") -> None:
         with self._locks[session_id]:
             st = self.store.load_state(session_id)
+            if st.suspended and by:
+                st.resumed_by = (st.resumed_by + [by])[-20:]
             st.suspended, st.suspended_reason, st.denies, st.holds = False, "", 0, 0
             self.store.save_state(st, time.time())
 
@@ -131,7 +133,7 @@ class Engine:
 
     def _session_cfg(self, st: state.SessionState) -> dict:
         """The baseline, plus the session's project, plus the hosts and directories declared when this run was launched."""
-        cfg = projects.apply(self.cfg, next((p for p in self.projects if p["name"] == st.project), None)) if st.project else self.cfg
+        cfg = projects.apply(self.cfg, next((p for p in self.projects if p["name"] == st.project), None), st.project_root) if st.project else self.cfg
         if not (st.scope_hosts or st.scope_dirs):
             return cfg
         extra = {**cfg["scope"], "extra_dirs": cfg["scope"]["extra_dirs"] + st.scope_dirs}
@@ -152,7 +154,8 @@ class Engine:
                 st.scope_hosts, st.scope_dirs = ev.scope_hosts, ev.scope_dirs
             if st.step == 0:
                 st.observe = ev.observe  # likewise only taken at the start of the run
-                st.project = (projects.find(self.projects, ev.cwd) or {}).get("name", "")
+                project, st.project_root = projects.match(self.projects, ev.cwd, ev.repo, ev.repo_root, ev.project)
+                st.project, st.repo = (project or {}).get("name", ""), ev.repo
                 st.machine, st.user = ev.machine, ev.user
             cfg = self._session_cfg(st)
             l0 = rules.assess(ev, cfg)

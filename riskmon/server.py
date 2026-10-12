@@ -89,8 +89,10 @@ def make_handler(engine: Engine, extension=None, policy_file=None, team: bool = 
                 return self._refuse(caller)
             if url.path == "/api/me":
                 return self._send(200, {"name": caller.name, "role": caller.role, "team": team, "test_runs": test_runs})
+            query = parse_qs(url.query)
+            narrow = {"machine": query.get("machine", [""])[0][:80], "project": query.get("project", [""])[0][:80]}
             if url.path == "/api/sessions":
-                sessions = engine.store.sessions()
+                sessions = [s for s in engine.store.sessions() if all(not v or s[k] == ("" if v == "-" else v) for k, v in narrow.items())]
                 for s in sessions:
                     s["drift_level"] = drift.level(s["drift_peak"], engine.cfg)
                 return self._send(200, sessions)
@@ -101,12 +103,12 @@ def make_handler(engine: Engine, extension=None, policy_file=None, team: bool = 
                 sid = parse_qs(url.query).get("session_id", [""])[0]
                 return self._send(200, report.build(engine.store, sid, engine.cfg))
             if url.path == "/api/overview":
-                return self._send(200, {**insights.overview(engine.store), "judge": engine.judge.available, "judge_note": engine.judge.unavailable or engine.judge.last_error,
+                return self._send(200, {**insights.overview(engine.store, **narrow), "judge": engine.judge.available, "judge_note": engine.judge.unavailable or engine.judge.last_error,
                                         "test_area": extension is not None})
             if url.path == "/api/pending":
-                return self._send(200, insights.pending(engine.store))
+                return self._send(200, insights.pending(engine.store, **narrow))
             if url.path == "/api/incidents":
-                return self._send(200, insights.incidents(engine.store))
+                return self._send(200, insights.incidents(engine.store, **narrow))
             if url.path == "/api/policy":
                 return self._send(200, {"baseline": policy_view(engine.cfg), "projects": engine.projects, "rules": list(projects.RULES), "file": str(policy_file)})
             if extension is not None and url.path.startswith("/test/"):
@@ -209,7 +211,7 @@ def make_handler(engine: Engine, extension=None, policy_file=None, team: bool = 
                 if self.headers.get("X-Riskmon") != "1":
                     return self._send(403, {"error": "missing X-Riskmon header"})
                 if parts[1] == "sessions" and parts[3] == "resume":
-                    engine.resume(parts[2])
+                    engine.resume(parts[2], caller.name)
                     return self._send(200, {"ok": True})
                 if parts[1] == "events" and parts[3] in ("false-positive", "dismiss") and parts[2].isdigit():
                     try:

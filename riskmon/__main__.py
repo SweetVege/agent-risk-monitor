@@ -53,6 +53,7 @@ def main() -> None:
     u.add_argument("--model", help="model for this run, passed to the claude CLI (default: whatever the CLI is set to)")
     u.add_argument("--observe", action="store_true", help="for research: let would-be holds through and record them, to see what the agent does when nothing stops it")
     u.add_argument("--allow-host", action="append", default=[], help="an extra host this run may contact (repeatable)")
+    u.add_argument("--project", default="", help="the project whose policy this run follows, by name; without it the repository or the directory decides")
     u.add_argument("--allow-dir", action="append", default=[], help="an extra directory this run may touch (repeatable)")
     args = ap.parse_args()
     if args.cmd == "hook":  # every action passes through here, so do nothing extra
@@ -167,7 +168,7 @@ def main() -> None:
     elif args.cmd == "run":
         from .runner import run
 
-        sys.exit(run(args.task, args.cwd, cfg["port"], args.max_turns, args.allow_host, args.allow_dir, args.observe, args.model))
+        sys.exit(run(args.task, args.cwd, cfg["port"], args.max_turns, args.allow_host, args.allow_dir, args.observe, args.model, args.project))
     elif args.cmd == "report":
         from . import report
 

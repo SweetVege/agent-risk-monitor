@@ -1,7 +1,7 @@
 """Policies in two layers: a baseline every session follows, and what each project adds to it.
 
-A project is a directory. A session started in it or under it gets the baseline plus that
-project's own scope: hosts it may contact, directories it may use, paths that are read-only or
+A project is a repository, a directory, or both. A session started in a checkout of that repository,
+or in that directory or under it, gets the baseline plus that project's own scope: hosts it may contact, directories it may use, paths that are read-only or
 protected there. A project can also make the handling of a kind of action stricter than the
 baseline. It cannot make it looser, so the baseline stays the floor for everything.
 """
@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 
-from . import config
+from . import config, repo as repos
 from .scope import RULES
 
 RANK = {"score": 0, "confirm": 1, "deny": 2}
@@ -56,9 +56,18 @@ def clean_project(body: dict) -> dict:
     name, root = body.get("name"), body.get("root")
     if not isinstance(name, str) or not _NAME.match(name.strip()):
         raise ValueError("a project needs a name of letters, digits, spaces, dots or dashes")
-    if not isinstance(root, str) or not os.path.isabs(os.path.expanduser(root.strip())):
-        raise ValueError("a project needs the full path of its directory")
-    project = {"name": name.strip(), "root": os.path.normpath(os.path.expanduser(root.strip()))}
+    root = root.strip() if isinstance(root, str) else ""
+    given = body.get("repo")
+    given = given.strip() if isinstance(given, str) else ""
+    # a repository is kept the way a session's is reported, whether it was typed as a clone address or as host/owner/name
+    repo = repos.normalize(given) or repos.normalize("https://" + given) if given else ""
+    if given and (not repo or repo.count("/") < 2):
+        raise ValueError(f"{given!r} is not a repository; give its clone address, or host/owner/name such as github.com/acme/billing")
+    if root and not os.path.isabs(os.path.expanduser(root)):
+        raise ValueError("a project's directory is given as a full path")
+    if not root and not repo:
+        raise ValueError("a project needs a repository, the full path of a directory, or both")
+    project = {"name": name.strip(), "repo": repo, "root": os.path.normpath(os.path.expanduser(root)) if root else ""}
     for kind in LISTS:
         project[kind] = clean_list(kind, body.get(kind, []))
     for mode in MODES:
@@ -90,17 +99,39 @@ def find(projects: list[dict], cwd: str) -> dict | None:
     here = os.path.normpath(cwd or "/")
     best = None
     for p in projects:
-        if here == p["root"] or here.startswith(p["root"].rstrip("/") + "/"):
+        if p["root"] and (here == p["root"] or here.startswith(p["root"].rstrip("/") + "/")):
             if best is None or len(p["root"]) > len(best["root"]):
                 best = p
     return best
 
 
-def apply(cfg: dict, project: dict | None) -> dict:
-    """The baseline with one project's additions. The project widens what is in scope there and can only tighten the handling."""
+def match(projects: list[dict], cwd: str, repo: str = "", repo_root: str = "", named: str = "") -> tuple[dict | None, str]:
+    """The project a session belongs to, and the directory its relative paths are taken from on that session's machine.
+
+    A name given by whoever launched the run comes first. Then the repository, which is the same on every machine.
+    Then the directory, which is how a project with no remote is found.
+    """
+    here = os.path.normpath(cwd or "/")
+    if named:
+        chosen = next((p for p in projects if p["name"] == named), None)
+        if chosen:
+            return chosen, repo_root or here
+    if repo:
+        chosen = next((p for p in projects if p["repo"] == repo), None)
+        if chosen:
+            return chosen, repo_root or here
+    chosen = find(projects, cwd)
+    return (chosen, chosen["root"]) if chosen else (None, "")
+
+
+def apply(cfg: dict, project: dict | None, root: str = "") -> dict:
+    """The baseline with one project's additions. The project widens what is in scope there and can only tighten the handling.
+
+    `root` is where the project is for the session at hand; a project found by its repository has no directory of its own.
+    """
     if not project:
         return cfg
-    root = project["root"]
+    root = root or project["root"] or "/"
 
     def under_root(p: str) -> str:
         p = os.path.expanduser(p)

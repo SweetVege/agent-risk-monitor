@@ -48,6 +48,9 @@ class SessionState:
     scope_dirs: list = field(default_factory=list)
     approved: list = field(default_factory=list)  # actions a person approved; allowed outright if they recur in this session
     project: str = ""  # the project whose policy applies, fixed when the session starts
+    project_root: str = ""  # where that project is on the session's machine; its relative paths are taken from here
+    repo: str = ""  # the repository the session started in, as `host/owner/name`
+    resumed_by: list = field(default_factory=list)  # who lifted a suspension, most recent last
     machine: str = ""  # on a shared daemon, where the session runs and as whom
     user: str = ""
     held: list = field(default_factory=list)  # actions waiting for review; trying one again is refused outright

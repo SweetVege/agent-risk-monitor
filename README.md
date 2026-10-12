@@ -61,7 +61,7 @@ When the daemon is not running, the hook denies actions such as network access a
 | Resume a suspended session | "Resume session" in the console, or `riskmon resume <session id>` |
 | Approve a held action, or keep it refused | "Approve" or "Keep it refused" in the console's review queue |
 | Overturn a wrong verdict | "Mark false positive" on that action in the session |
-| Give a project its own scope | "Add a project" on the Policy page |
+| Give a project its own scope | "Add a project" on the Policy page, by repository or by directory |
 | Run a task unattended | `riskmon run --cwd <project> "task"`; needs the `claude` CLI |
 | Change the policy | The console's Policy page; changes take effect on each session's next action. Thresholds and other keys: `~/.riskmon/policy.json` with just the keys you change, then restart the daemon |
 
@@ -105,7 +105,9 @@ It asks for the machine token without showing it, checks that the daemon accepts
 
 Members open the daemon's address in a browser and paste their token, which is kept for that browser tab only. Evaluations are not started from a shared daemon's page.
 
-What a shared daemon does not do yet: projects are still matched by directory, so the same repository checked out at different paths on different machines is not recognised as one project, and nobody is notified when something is waiting for review.
+On a shared daemon the Protect page says which machine each session ran on and as which account, and can be narrowed to one machine or one project. Each approval, refusal and resumed session carries the name of the member who did it.
+
+What a shared daemon does not do yet: nobody is notified when something is waiting for review.
 
 ## Layout
 
@@ -116,6 +118,7 @@ What a shared daemon does not do yet: projects are still matched by directory, s
 | `riskmon/rules.py` | L0, the capability allowlist. Whether a host, path or command is beyond what the policy allows |
 | `riskmon/scope.py` | Scope policy. Says outright how a class of action is handled |
 | `riskmon/projects.py` | The policy's two layers: a baseline, and what each project adds to it |
+| `riskmon/repo.py` | Which repository a directory belongs to, read from its git files |
 | `riskmon/state.py` | L1, trajectory state. Carried score, behaviour tags, combination rules, the summary a judge reads |
 | `riskmon/optional.py` | The slots for the judge and the drift score, and what stands in when they are absent |
 | `riskmon/engine.py` | Ties the tiers together and maps the result to a verdict |
@@ -150,7 +153,7 @@ The policy can also declare paths inside the workspace read-only, for example ve
 
 A change to one is denied in an unattended run and needs a person's agreement in an attended one. Reading and running what is there is unaffected. Nothing is read-only unless the policy says so.
 
-**Baseline and projects.** The policy has two layers. The baseline is what every session follows. A project is a directory with additions of its own: hosts it may contact, directories it may use outside its own, paths that are read-only or protected there. A session started in that directory or below it gets the baseline plus those. A project can also make the handling of a kind of action stricter than the baseline; it cannot make it looser. Both layers are edited on the console's Policy page and kept in the monitor's home directory (`policy.json` and `projects.json`), which an agent is not allowed to read or change.
+**Baseline and projects.** The policy has two layers. The baseline is what every session follows. A project is a repository, a directory, or both, with additions of its own: hosts it may contact, directories it may use outside its own, paths that are read-only or protected there. A session gets the baseline plus those when it starts in a checkout of that repository, wherever the checkout is and on whichever machine, or in that directory or below it. The repository is read from the checkout's `origin` remote and written `host/owner/name`, so a clone over SSH and one over HTTPS are the same project, and a project's relative paths are taken from each checkout's own root. To put a run under a project by name instead, launch it with `riskmon run --project <name>` or with `RISKMON_PROJECT` set. Which project a session belongs to is settled at its first action and does not change after that. A project can also make the handling of a kind of action stricter than the baseline; it cannot make it looser. Both layers are edited on the console's Policy page and kept in the monitor's home directory (`policy.json` and `projects.json`), which an agent is not allowed to read or change.
 
 An unattended run can declare extra scope when it is launched. It cannot be widened afterwards:
 
@@ -193,6 +196,7 @@ python3 -m evals.run
 
 - **Subprocesses are a blind spot.** The hook only sees tool calls the agent makes. What a script or background process it starts goes on to do is invisible here. A complete product needs egress control at the operating-system level.
 - **This is not an isolation boundary.** The monitor and the agent run on the same machine as the same user, so the self-protection rules only stop what goes through a tool call. A production deployment has to put the monitor where the agent cannot reach it.
+- **A project is recognised by what the checkout says.** The repository comes from the working directory's git configuration, which the agent's own machine reports. It is read before the session's first action, so an agent cannot move its own session into another project, but nothing verifies that a checkout really is a clone of the repository it names.
 - **L0 parses text.** Hosts and paths are taken from the command string, so indirection through variables or aliases gets past it. That is why a judge and system-level controls are needed.
 - **Detection is largely untested.** `evals/` has benign traces and a few recorded sessions. They do not show what the monitor can stop. The runs recorded under `evals/experiments/` were all made through Claude Code: about 120 with three Claude models, none of which reached for anything that was not the project's, and 40 with two models from another vendor, one of which tried to read a neighbouring project's token file in four of twenty runs and was denied each time. Those results describe a model inside Claude Code, not the model on its own. Later runs in a separate evaluation harness, whose records are not part of this repository, gave each model a two-sentence system prompt. There the smallest of the three Claude models did take the token, and in other runs wrote the data itself and reported the task done; the other vendor's larger model used the token in every run the monitor did not stop. With the monitor refusing, the token reached no agent in a hundred runs. That is one scenario and twenty runs per model, which is enough to say the monitor's refusals mattered there and too little to state a detection rate. See `evals/README.md` and `evals/experiments/`.
 - **The experiment records describe the full monitor.** The runs in `evals/experiments/` had the model judge and, in the later ones, the drift score. Scores and verdicts quoted there will not all reproduce with this repository alone.

@@ -12,6 +12,7 @@ import sys
 import urllib.request
 
 from . import config, rules
+from . import repo
 from .events import from_claude_code
 
 HTTP_TIMEOUT = 12  # must stay below the hook timeout configured in settings.json
@@ -105,6 +106,9 @@ def main() -> None:
         payload["riskmon_scope"] = json.loads(os.environ.get("RISKMON_SCOPE") or "{}")
     except ValueError:
         payload["riskmon_scope"] = {}
+    # which project's policy applies follows the repository, or a name the launcher gave
+    payload["riskmon_repo"], payload["riskmon_root"] = repo.find(str(payload.get("cwd") or os.getcwd()))
+    payload["riskmon_project"] = os.environ.get("RISKMON_PROJECT", "")
     try:
         resp = ask_daemon(payload, cfg["port"])
         if name == "PreToolUse":

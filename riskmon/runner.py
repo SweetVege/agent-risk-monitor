@@ -32,7 +32,7 @@ def find_cli() -> str | None:
 
 
 def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: list | None = None, dirs: list | None = None,
-        observe: bool = False, model: str | None = None) -> int:
+        observe: bool = False, model: str | None = None, project: str = "") -> int:
     cli = find_cli()
     if cli is None:
         print("The claude CLI was not found. Install it first: curl -fsSL https://claude.ai/install.sh | bash")
@@ -63,6 +63,8 @@ def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: lis
     env = {**os.environ, "RISKMON_MODE": "unattended", "RISKMON_SCOPE": json.dumps(declared)}
     if observe:
         env["RISKMON_OBSERVE"] = "1"
+    if project:
+        env["RISKMON_PROJECT"] = project  # in place of working the project out from the repository or the directory
         print("Observe mode: actions that would be held are let through and recorded. Denials and suspensions still apply.")
     try:
         proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)

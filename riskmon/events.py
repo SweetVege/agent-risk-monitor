@@ -31,6 +31,9 @@ class ActionEvent:
     scope_dirs: list = field(default_factory=list)  # extra directories allowed
     machine: str = ""  # on a shared daemon, the machine the action came from, as named by its token
     user: str = ""  # and the account the agent runs as there, as that machine reports it
+    repo: str = ""  # the repository the session's directory belongs to, as `host/owner/name`, and where it is checked out
+    repo_root: str = ""
+    project: str = ""  # a project named by whoever launched the run, in place of matching one
 
 
 _FILE_READ = {"Read", "Glob", "Grep", "NotebookRead"}
@@ -98,4 +101,7 @@ def from_claude_code(payload: dict) -> ActionEvent:
         scope_dirs=[os.path.expanduser(str(d)) for d in scope.get("dirs", [])][:50],
         machine=str(payload.get("riskmon_machine", ""))[:80],
         user=str(payload.get("riskmon_user", ""))[:80],
+        repo=str(payload.get("riskmon_repo", ""))[:300],
+        repo_root=str(payload.get("riskmon_root", ""))[:1000],
+        project=str(payload.get("riskmon_project", ""))[:80],
     )

@@ -134,12 +134,19 @@ const RULES = { outside_write: "Writing outside the workspace", read_only_write:
   outside_search: "Searching outside the workspace", outside_read: "Reading outside the workspace", unlisted_host: "Contacting a host off the allowlist", protected_path: "Touching a protected path", unknown_program: "Running an unlisted program" };
 const HANDLING = { score: ["Scored like anything else", ""], confirm: ["A person must agree", "warn"], deny: ["Refused", "bad"] };
 let timer = null, testMounted = false, overview = null;
+// the Protect page can be narrowed to one machine or one project; "-" stands for sessions that have none
+const narrow = { machine: "", project: "" };
+const narrowed = path => { const q = Object.entries(narrow).filter(([, v]) => v).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&"); return q ? path + "?" + q : path; };
+// where a session runs and as whom, on a shared daemon; nothing on a daemon for this machine alone
+const where = x => [x.machine, x.user].filter(Boolean).join(" · ");
+const by = name => name && name !== "local" ? " by " + name : " by a person";
 
 async function act(path) { await post(path); route(); }
 
 function pendingItem(p) {
   return el("div", { class: "item" },
-    el("div", { class: "meta" }, ago(p.ts), " · ", el("span", { class: "chip warn" }, p.kind), " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(p.session_id) }, "open the session")),
+    el("div", { class: "meta" }, ago(p.ts), " · ", el("span", { class: "chip warn" }, p.kind), where(p) ? [" · ", where(p)] : null, p.project ? [" · ", el("span", { class: "chip" }, p.project)] : null,
+      " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(p.session_id) }, "open the session")),
     p.task ? el("div", {}, el("span", { class: "muted" }, "Task: "), p.task) : null,
     el("pre", { class: "cmd", style: "margin-top:6px" }, p.target),
     el("div", { class: "why" }, [p.reason, p.judge ? "judge: " + p.judge : ""].filter(Boolean).join(" · ")),
@@ -149,13 +156,19 @@ function pendingItem(p) {
 
 async function protectView() {
   let o, pending, incidents, sessions;
-  try { [o, pending, incidents, sessions] = await Promise.all([get("/api/overview"), get("/api/pending"), get("/api/incidents"), get("/api/sessions")]); }
+  try { [o, pending, incidents, sessions] = await Promise.all([get(narrowed("/api/overview")), get(narrowed("/api/pending")), get(narrowed("/api/incidents")), get(narrowed("/api/sessions"))]); }
   catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The daemon is not answering.")); return; }
   overview = o; chrome();
   const tile = (n, label, cls) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "n" }, n), el("div", { class: "l" }, label));
   const stopped = (o.stopped_week.deny || 0) + (o.stopped_week.suspend || 0);
+  const pick = (key, values, all, none) => values.length ? el("select", { "aria-label": all, onchange: e => { narrow[key] = e.target.value; protectView(); } },
+    [["", all], ...values.map(v => [v, v]), ["-", none]].map(([value, word]) => el("option", { value, selected: narrow[key] === value }, word))) : null;
+  const filters = o.machines.length || o.projects.length ? el("div", { class: "addrow", style: "margin:0 0 14px" }, el("span", { class: "muted small" }, "Show"),
+    pick("machine", o.machines, "every machine", "sessions with no machine"), pick("project", o.projects, "every project", "sessions in no project"),
+    narrow.machine || narrow.project ? el("span", { class: "muted small" }, o.pending > o.pending_here ? `${o.pending - o.pending_here} more waiting for review elsewhere` : "") : null) : null;
+  const shared = o.machines.length > 0;
   const tiles = el("div", { class: "tiles" },
-    tile(o.pending, "waiting for your review", o.pending ? "alert" : "calm"),
+    tile(o.pending_here, "waiting for your review", o.pending_here ? "alert" : "calm"),
     tile(o.suspended.length, "sessions suspended", o.suspended.length ? "alert" : "calm"),
     tile(stopped, "actions refused, last 7 days"), tile(o.sessions_week, "sessions, last 7 days"), tile(o.actions_week, "actions checked, last 7 days"));
   const empty = !o.sessions_all ? el("div", { class: "banner info" }, el("div", {}, el("b", {}, "Nothing has been monitored yet. "),
@@ -165,32 +178,32 @@ async function protectView() {
     pending.length ? pending.map(pendingItem) : el("p", { class: "muted", style: "margin:0" }, "Nothing is waiting. Actions that need a person's agreement in an unattended run appear here."));
   const suspended = sessions.filter(s => s.suspended);
   const stoppedSessions = suspended.length ? el("section", { class: "panel" }, el("h3", {}, `Suspended sessions · ${suspended.length}`), suspended.map(s => el("div", { class: "item" },
-    el("div", { class: "meta" }, ago(s.updated), " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(s.id) }, "open the session")),
+    el("div", { class: "meta" }, ago(s.updated), where(s) ? [" · ", where(s)] : null, " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(s.id) }, "open the session")),
     el("div", {}, s.task || "(no task recorded)"), el("div", { class: "why" }, s.suspended_reason),
     el("div", { class: "acts" }, el("button", { class: "btn", onclick: () => act(`/api/sessions/${encodeURIComponent(s.id)}/resume`) }, "Resume session"))))) : null;
   const top = Math.max(1, ...o.kinds_week.map(k => k[1]));
   const kinds = o.kinds_week.length ? el("section", { class: "panel" }, el("h3", {}, "What was stopped or held, last 7 days"),
     el("div", { class: "bars" }, o.kinds_week.flatMap(([label, n]) => [el("div", {}, label), el("div", { class: "track" }, el("i", { style: `width:${Math.round(100 * n / top)}%` })), el("div", { class: "muted" }, n)]))) : null;
   const feed = el("section", { class: "panel" }, el("h3", {}, "Recently stopped or held"), incidents.length ? el("div", { class: "scroll" }, el("table", { class: "rows" },
-    el("thead", {}, el("tr", {}, ["When", "What happened", "Kind", "Action"].map(h => el("th", {}, h)))),
+    el("thead", {}, el("tr", {}, ["When", shared ? "Where" : null, "What happened", "Kind", "Action"].filter(Boolean).map(h => el("th", {}, h)))),
     el("tbody", {}, incidents.slice(0, 25).map(i => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(i.session_id) + "?e=" + i.id },
-      el("td", { class: "muted", style: "white-space:nowrap" }, ago(i.ts)), el("td", {}, el("span", { class: "chip " + i.verdict }, WORD[i.verdict]), i.would ? [" ", el("span", { class: "chip warn" }, "would be held")] : null,
-        i.review ? [" ", el("span", { class: "muted small" }, i.review === "dismissed" ? "kept refused" : "overturned")] : null),
+      el("td", { class: "muted", style: "white-space:nowrap" }, ago(i.ts)), shared ? el("td", { class: "small", style: "white-space:nowrap" }, where(i)) : null, el("td", {}, el("span", { class: "chip " + i.verdict }, WORD[i.verdict]), i.would ? [" ", el("span", { class: "chip warn" }, "would be held")] : null,
+        i.review ? [" ", el("span", { class: "muted small" }, (i.review === "dismissed" ? "kept refused" : i.verdict === "hold" ? "approved" : "overturned") + (i.review_by && i.review_by !== "local" ? by(i.review_by) : ""))] : null),
       el("td", {}, i.kind), el("td", {}, el("div", { class: "mono task" }, i.target))))))) : el("p", { class: "muted", style: "margin:0" }, "Nothing has been stopped."));
   const list = el("section", { class: "panel" }, el("h3", {}, "Sessions"), sessions.length ? el("div", { class: "scroll" }, el("table", { class: "rows" },
-    el("thead", {}, el("tr", {}, ["Last active", "Task", "Actions", "Refused", ""].map(h => el("th", {}, h)))),
+    el("thead", {}, el("tr", {}, ["Last active", shared ? "Where" : null, "Task", "Actions", "Refused", ""].filter(Boolean).map(h => el("th", {}, h)))),
     el("tbody", {}, sessions.slice(0, 40).map(s => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(s.id) },
-      el("td", { class: "muted", style: "white-space:nowrap" }, ago(s.updated)), el("td", {}, el("div", { class: "task" }, s.task || "(no task recorded)")),
+      el("td", { class: "muted", style: "white-space:nowrap" }, ago(s.updated)), shared ? el("td", { class: "small", style: "white-space:nowrap" }, where(s)) : null, el("td", {}, el("div", { class: "task" }, s.task || "(no task recorded)")),
       el("td", { class: "num" }, s.step), el("td", { class: "num" }, s.denies),
       el("td", {}, s.project ? [el("span", { class: "chip" }, s.project), " "] : null, s.suspended ? el("span", { class: "chip bad" }, "suspended") : null, s.unattended ? [" ", el("span", { class: "chip" }, s.holds ? `unattended · ${s.holds} held` : "unattended")] : null)))))) : el("p", { class: "muted", style: "margin:0" }, "No sessions yet."));
   const y = window.scrollY;
-  main.replaceChildren(...[empty, tiles, queue, stoppedSessions, kinds, feed, list].filter(Boolean));
+  main.replaceChildren(...[empty, filters, tiles, queue, stoppedSessions, kinds, feed, list].filter(Boolean));
   window.scrollTo(0, y);
 }
 
 function reviewButtons(e) {
   const d = e.detail;
-  if (d.review) return el("span", { class: "muted small" }, d.review === "dismissed" ? "kept refused by a person" : e.verdict === "hold" ? "approved by a person" : "marked a false positive");
+  if (d.review) return el("span", { class: "muted small" }, (d.review === "dismissed" ? "kept refused" : e.verdict === "hold" ? "approved" : "marked a false positive") + by(d.review_by));
   if (e.verdict === "allow" || d.carried == null || (d.facets || []).includes("monitor_tamper")) return null;
   return [el("button", { class: "btn", onclick: () => act(`/api/events/${e.id}/false-positive`) }, e.verdict === "hold" ? "Approve" : "Mark false positive"),
     e.verdict === "hold" ? el("button", { class: "btn", onclick: () => act(`/api/events/${e.id}/dismiss`) }, "Keep it refused") : null];
@@ -226,7 +239,10 @@ async function sessionView(id, focus) {
   main.replaceChildren(...[
     el("a", { class: "back", href: "#/protect" }, "← Back to the overview"),
     s.suspended ? el("div", { class: "banner bad" }, el("span", {}, "Session suspended: " + s.suspended_reason), el("button", { class: "btn", onclick: () => act(`/api/sessions/${encodeURIComponent(id)}/resume`) }, "Resume session")) : null,
-    el("section", { class: "panel" }, el("h2", {}, s.task || "(no task recorded)"), el("div", { class: "muted small mono" }, id), el("div", { class: "muted small" }, [s.unattended ? "unattended" : "attended", s.observe ? "observe mode" : "", s.updated ? "last active " + ago(s.updated) : ""].filter(Boolean).join(" · "))),
+    el("section", { class: "panel" }, el("h2", {}, s.task || "(no task recorded)"), el("div", { class: "muted small mono" }, id), el("div", { class: "muted small" }, [s.unattended ? "unattended" : "attended", s.observe ? "observe mode" : "", s.updated ? "last active " + ago(s.updated) : ""].filter(Boolean).join(" · ")),
+      s.machine || s.project || s.repo ? el("div", { class: "kv", style: "margin-top:10px" }, s.machine ? row("Machine", [s.machine, s.user ? el("span", { class: "muted" }, " as " + s.user) : null]) : null,
+        s.repo ? row("Repository", el("span", { class: "mono" }, s.repo)) : null, row("Policy", s.project ? ["baseline and the project ", el("b", {}, s.project)] : "baseline only"),
+        (s.resumed_by || []).length ? row("Resumed", "by " + s.resumed_by.join(", then ")) : null) : null),
     summary, el("h3", { style: "margin:20px 0 10px" }, `Every action · ${events.length}`), ...steps].filter(Boolean));
   if (focus) document.getElementById("e" + focus)?.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
 }
@@ -247,6 +263,12 @@ function listEditor(values, placeholder, save, fixed = []) {
     el("div", { class: "tags" }, values.map(v => el("span", { class: "tag" }, v, el("button", { class: "x", title: "Remove", "aria-label": "Remove " + v, onclick: async () => { if (await save(values.filter(x => x !== v))) policyView(); } }, "×"))),
       !values.length && !fixed.length ? el("span", { class: "muted" }, "None") : null),
     el("div", { class: "addrow" }, input, el("button", { class: "btn", onclick: add }, "Add")));
+}
+
+function repoRow(pr, put) {
+  const input = el("input", { type: "text", value: pr.repo, placeholder: "github.com/owner/name", "aria-label": "Repository of " + pr.name, style: "flex:2 1 260px", onkeydown: e => { if (e.key === "Enter") save(); } });
+  const save = async () => { if (await put({ repo: input.value })) policyView(); };
+  return el("div", { class: "addrow" }, input, el("button", { class: "btn", onclick: save }, "Save"));
 }
 
 function handlingTable(rules, chosen, floor, save) {
@@ -285,10 +307,11 @@ async function policyView() {
     el("p", { class: "muted small", style: "margin:12px 0 0" }, "Saved in ", el("code", {}, data.file), ". The thresholds are changed there."), tryIt("baseline", "this baseline"));
   const project = pr => {
     const put = patch => send("/api/policy/projects", { ...pr, ...patch });
-    return el("section", { class: "panel" }, el("div", { style: "display:flex;gap:12px;align-items:baseline;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, pr.name), el("span", { class: "mono muted" }, pr.root),
+    return el("section", { class: "panel" }, el("div", { style: "display:flex;gap:12px;align-items:baseline;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, pr.name), el("span", { class: "mono muted" }, [pr.repo, pr.root].filter(Boolean).join("  ·  ")),
         el("button", { class: "btn", style: "margin-left:auto", onclick: async () => { if (confirm(`Remove the project "${pr.name}"? Sessions there go back to the baseline alone.`) && await send("/api/policy/projects/delete", { name: pr.name })) policyView(); } }, "Remove project")),
-      el("p", { class: "muted", style: "margin:6px 0 14px" }, "Applies to sessions started in this directory or below it, on top of the baseline."),
-      el("h3", {}, "More hosts this project may contact"), listEditor(pr.allow_hosts, "api.internal.example", v => put({ allow_hosts: v })),
+      el("p", { class: "muted", style: "margin:6px 0 14px" }, "Applies on top of the baseline to sessions started ", pr.repo ? "in a checkout of this repository, on any machine" : "", pr.repo && pr.root ? ", or " : "", pr.root ? "in this directory or below it" : "", "."),
+      el("h3", {}, "Repository"), el("p", { class: "muted small", style: "margin:-4px 0 8px" }, "The clone address, or host/owner/name. Sessions are matched by it wherever the checkout is."), repoRow(pr, put),
+      el("h3", { style: "margin-top:18px" }, "More hosts this project may contact"), listEditor(pr.allow_hosts, "api.internal.example", v => put({ allow_hosts: v })),
       el("h3", { style: "margin-top:18px" }, "More directories it may use, outside its own"), listEditor(pr.extra_dirs, "/data/shared", v => put({ extra_dirs: v })),
       el("h3", { style: "margin-top:18px" }, "Read-only paths in this project"), listEditor(pr.read_only, "vendor", v => put({ read_only: v }), p.read_only),
       el("h3", { style: "margin-top:18px" }, "Protected paths in this project"), listEditor(pr.protected_paths, "secrets", v => put({ protected_paths: v })),
@@ -296,9 +319,10 @@ async function policyView() {
       handlingTable(data.rules, pr.unattended, p.unattended, v => put({ unattended: v })),
       el("h3", { style: "margin-top:18px" }, "Stricter handling when someone is at the keyboard"), handlingTable(data.rules, pr.attended, p.attended, v => put({ attended: v })), tryIt("project:" + pr.name, "this project's policy"));
   };
-  const name = el("input", { type: "text", placeholder: "Name, such as fx-tools", "aria-label": "Project name" }), root = el("input", { type: "text", placeholder: "/full/path/to/the/project", "aria-label": "Project directory", style: "flex:2 1 260px" });
-  const create = el("section", { class: "panel" }, el("h3", {}, "Add a project"), el("p", { class: "muted", style: "margin:0 0 10px" }, "Give a directory its own scope: the hosts it needs, the paths that must not change there."),
-    el("div", { class: "addrow" }, name, root, el("button", { class: "btn primary", onclick: async () => { if (await send("/api/policy/projects", { name: name.value, root: root.value })) policyView(); } }, "Add project")));
+  const name = el("input", { type: "text", placeholder: "Name, such as fx-tools", "aria-label": "Project name" }), repo = el("input", { type: "text", placeholder: "github.com/owner/name", "aria-label": "Project repository", style: "flex:2 1 220px" }),
+    root = el("input", { type: "text", placeholder: "or /full/path/to/a/directory", "aria-label": "Project directory", style: "flex:2 1 220px" });
+  const create = el("section", { class: "panel" }, el("h3", {}, "Add a project"), el("p", { class: "muted", style: "margin:0 0 10px" }, "Give a repository or a directory its own scope: the hosts it needs, the paths that must not change there. A repository is recognised on every machine; a directory only where that path exists."),
+    el("div", { class: "addrow" }, name, repo, root, el("button", { class: "btn primary", onclick: async () => { if (await send("/api/policy/projects", { name: name.value, repo: repo.value, root: root.value })) policyView(); } }, "Add project")));
   main.replaceChildren(...[readOnly, baseline, el("h3", { style: "margin:24px 0 10px" }, `Projects · ${data.projects.length}`), ...data.projects.map(project), readOnly ? null : create].filter(Boolean));
   // the daemon refuses these from anyone but an administrator, so they are not offered either
   if (readOnly) { main.querySelectorAll("button, .addrow, a.btn").forEach(n => (n.matches("a") ? n.parentNode : n).remove()); main.querySelectorAll("select").forEach(s => { s.disabled = true; }); }
@@ -339,7 +363,7 @@ async function route() {
   const session = hash.match(/^#\/protect\/session\/([^?]+)(?:\?e=(\d+))?/);
   if (session) return sessionView(decodeURIComponent(session[1]), session[2]);
   await protectView();
-  timer = setInterval(() => { if ((location.hash || "#/protect") === "#/protect" && !document.querySelector("button:focus")) protectView(); }, 5000);
+  timer = setInterval(() => { if ((location.hash || "#/protect") === "#/protect" && !document.querySelector("button:focus, select:focus")) protectView(); }, 5000);
 }
 window.addEventListener("hashchange", route);
 route();
