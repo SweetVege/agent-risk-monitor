@@ -232,6 +232,72 @@ def _outside_paths(progs: list, cwd: str, cfg: dict) -> list[tuple[str, bool]]:
     return out
 
 
+# programs that are handed a path and leave it as it was: they read it, run it or check it
+_LEAVES_ALONE = _READERS | {"sed", "awk", "sort", "uniq", "cut", "tr", "nl", "tac", "od", "xxd", "cmp", "md5sum", "sha256sum", "shasum", "cd",
+                            "pytest", "py.test", "python", "python3", "mypy", "ruff", "flake8", "pylint", "node", "bash", "sh", "du", "tree"}
+_IN_PLACE = re.compile(r"^-(i|-in-place)")
+_REDIRECT_TARGET = re.compile(r"(?<![0-9&>])>>?\s*(?!&)([\"']?)([^\s;|&<>\"']+)\1")
+
+
+def _read_only_roots(cwd: str, cfg: dict) -> list[str]:
+    """The paths the policy declares read-only; relative ones are taken from the workspace."""
+    return [os.path.normpath(r if os.path.isabs(r) else os.path.join(cwd or "/", r)) for r in (_expand(x) for x in cfg["scope"].get("read_only", []))]
+
+
+def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[str]:
+    """Paths the policy declares read-only that this command may change.
+
+    A program that is handed such a path and is not known to leave it alone counts, as does a
+    redirection into one. When the path's name appears only inside inline code or a quoted script,
+    nothing can be said about what is done to it, and that counts too.
+    """
+    roots = _read_only_roots(cwd, cfg)
+    if not roots:
+        return []
+
+    def resolve(arg: str, base: str) -> str:
+        raw = _expand(arg)
+        return os.path.normpath(raw if os.path.isabs(raw) else os.path.join(base, raw))
+
+    def after_cd(programs: list) -> str:
+        base = cwd or "/"
+        for name, args, _ in programs:
+            if name == "cd":
+                base = resolve(args[0], base) if args and not args[0].startswith("-") else _home()
+        return base
+
+    hit, seen, here = [], False, cwd or "/"
+    for name, args, _ in progs:
+        if name == "cd":
+            here = resolve(args[0], here) if args and not args[0].startswith("-") else _home()
+            continue
+        paths = [resolve(a.split("=", 1)[1] if a.startswith("-") and "=" in a else a, here) for a in args if not a.startswith("-") or "=" in a]
+        inside = [q for q in paths if _under(q, roots)]
+        if not inside:
+            continue
+        seen = True
+        reads = name in _LEAVES_ALONE or (name == "git" and args and args[0] in _GIT_READS)
+        if name in ("sed", "sort") and any(_IN_PLACE.match(a) or a == "-o" for a in args):
+            reads = False
+        if name == "find" and {"-delete", "-exec", "-execdir"} & set(args):
+            reads = False
+        if not reads:
+            hit += inside
+    body = _HEREDOC.sub("", command)
+    for m in _REDIRECT_TARGET.finditer(body):
+        q = resolve(m.group(2), after_cd(_programs(body[: m.start()])[0]))  # against the directory of the last cd before it
+        if _under(q, roots):
+            seen = True
+            hit.append(q)
+    if not hit and not seen:
+        text = _expand(command)
+        named = [r for r in roots if r in text or (cwd and os.path.relpath(r, cwd) + "/" in text)]
+        inline = _HEREDOC.search(command) or any(n in cfg["commands"]["interpreter"] and _INLINE_FLAGS & set(a) for n, a, _ in progs)
+        if named and inline:
+            hit += named
+    return sorted(set(hit))
+
+
 def _is_operator(tok: str) -> bool:
     return bool(tok) and all(c in _PUNCT for c in tok)
 
@@ -347,6 +413,9 @@ def _assess_shell(ev: ActionEvent, cfg: dict, res: L0Result) -> None:
     if any(_is_env_file(t) for name, args, _ in progs if name not in _NAME_ONLY for t in args):
         res.hit("resource", 35, "protected_access", "command touches a .env file")
 
+    for path in _read_only_writes(ev.target, progs, ev.cwd, cfg):
+        res.hit("boundary", 60, "readonly_write", f"command may change {path}, which is declared read-only")
+
     # widening scope: the command reaches outside the workspace. File tools always had their paths checked; paths in commands did not
     if ev.cwd:
         home = _home()
@@ -393,6 +462,9 @@ def _assess_file(ev: ActionEvent, cfg: dict, res: L0Result) -> None:
         return
     path = os.path.normpath(raw if os.path.isabs(raw) else os.path.join(ev.cwd or "/", raw))
     in_workspace = bool(ev.cwd) and _under(path, [ev.cwd, *cfg["scope"]["extra_dirs"]])
+
+    if write and _under(path, _read_only_roots(ev.cwd, cfg)):
+        res.hit("boundary", 60, "readonly_write", f"changes {path}, which is declared read-only")
 
     own = _under(path, cfg["monitor_paths"])
     if own or _HOOK_CONFIG in path:

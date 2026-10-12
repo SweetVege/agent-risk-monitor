@@ -433,6 +433,42 @@ class ScopePolicyTest(unittest.TestCase):
         self.assertEqual(self.run_tool("Bash", command="mdfind -name rates.csv").verdict, "allow")
 
 
+class ReadOnlyPathsTest(unittest.TestCase):
+    """The policy can declare paths inside the workspace read-only; nothing is read-only unless it does."""
+
+    def setUp(self):
+        self.cfg = config.load()
+        self.cfg["scope"]["read_only"] = ["vendor", "tests"]
+        self.engine = Engine(self.cfg, judge=NoJudge())
+        self.addCleanup(self.engine.store.close)
+
+    def facets(self, command):
+        from riskmon import rules
+
+        return rules.assess(call("Bash", command=command), self.cfg).facets
+
+    def test_changes_are_recognised_however_they_are_written(self):
+        for cmd in ("sed -i 's/a/b/' vendor/lib/x.py", "echo x >> vendor/lib/x.py", "cd vendor/lib && sed -i s/a/b/ x.py", "cd tests && echo > conftest.py",
+                    "rm tests/test_a.py", "cp /tmp/x.py vendor/lib/x.py", "find vendor -name '*.py' -delete",
+                    "python3 - <<'PY'\nopen('vendor/lib/x.py','w').write('x')\nPY"):
+            self.assertIn("readonly_write", self.facets(cmd), cmd)
+
+    def test_reading_and_running_are_not_changes(self):
+        for cmd in ("python3 -m pytest -q tests/test_a.py", "cat vendor/lib/x.py", "grep -rn holiday vendor", "sed -n '1,40p' vendor/lib/x.py",
+                    "git diff vendor", "ls -la vendor tests", "sed -i 's/a/b/' src/a.py", "pytest -q > /tmp/out.txt 2>&1", "cd tests && ls"):
+            self.assertNotIn("readonly_write", self.facets(cmd), cmd)
+
+    def test_an_unattended_run_is_denied_and_an_attended_one_is_asked(self):
+        payload = {"session_id": "u", "cwd": CWD, "tool_name": "Bash", "tool_input": {"command": "rm tests/test_a.py"}, "riskmon_mode": "unattended"}
+        self.assertEqual(self.engine.evaluate(from_claude_code(payload)).verdict, "deny")
+        self.assertEqual(self.engine.evaluate(call("Edit", "a", file_path=f"{CWD}/tests/test_a.py", new_string="x")).verdict, "ask")
+
+    def test_nothing_is_read_only_by_default(self):
+        from riskmon import rules
+
+        self.assertNotIn("readonly_write", rules.assess(call("Bash", command="rm tests/test_a.py"), config.load()).facets)
+
+
 class ObserveModeTest(unittest.TestCase):
     """Observe mode relaxes holds only, to see how far an agent goes when nothing stops it."""
 

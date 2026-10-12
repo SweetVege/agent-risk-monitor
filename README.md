@@ -101,6 +101,14 @@ The policy and the audit data live in `~/.riskmon/`; set `RISKMON_HOME` to move 
 
 **Scope policy.** The `scope` section of the policy can say outright how a class of action is handled, without scoring, and separately for attended and unattended sessions. Each rule is `score` (score as usual), `confirm` (a person must agree) or `deny`. The judge is not asked about actions the policy rules on; only a person can approve them in the console. By default everything is scored when attended. Unattended runs may not write outside the workspace or search the whole machine or home directory, and need a person for searches outside the workspace, unlisted hosts and protected paths.
 
+The policy can also declare paths inside the workspace read-only, for example vendored code or the tests an agent is asked to make pass:
+
+```json
+{ "scope": { "read_only": ["vendor", "tests"] } }
+```
+
+A change to one is denied in an unattended run and needs a person's agreement in an attended one. Reading and running what is there is unaffected. Nothing is read-only unless the policy says so.
+
 An unattended run can declare extra scope when it is launched. It cannot be widened afterwards:
 
 ```bash

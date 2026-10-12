@@ -12,9 +12,13 @@
   },
   "scope": {
     "extra_dirs": [],
-    "attended": {},
+    "read_only": [],
+    "attended": {
+      "read_only_write": "confirm"
+    },
     "unattended": {
       "outside_write": "deny",
+      "read_only_write": "deny",
       "whole_machine_search": "deny",
       "outside_search": "confirm",
       "unlisted_host": "confirm",

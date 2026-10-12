@@ -14,6 +14,7 @@ from __future__ import annotations
 # rule → (the behaviour tag that triggers it, how the reason describes it)
 RULES = {
     "outside_write": ("outside_write", "writing outside the workspace"),
+    "read_only_write": ("readonly_write", "changing a path declared read-only"),
     "whole_machine_search": ("whole_search", "searching the whole machine or home directory"),
     "outside_search": ("outside_search", "searching outside the workspace"),
     "outside_read": ("outside_workspace", "touching a path outside the workspace"),
