@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Risk Monitor</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --panel: #ffffff; --line: #e2e1db; --text: #1c1c1a; --muted: #6b6a65; --soft: #efeee9;
+    --good: #2f7d4f; --good-bg: #e6f3ea; --warn: #8a5a00; --warn-bg: #fbefd2;
+    --bad: #a32d2d; --bad-bg: #fbe6e6; --accent: #3c3489; --accent-bg: #ecebf8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #9a9993; --soft: #282826;
+      --good: #7fd1a0; --good-bg: #173524; --warn: #f0c060; --warn-bg: #3a2c0a;
+      --bad: #f09595; --bad-bg: #401818; --accent: #afa9ec; --accent-bg: #2a2850;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  header { padding: 16px 24px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header .top { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 6px; text-wrap: balance; }
+  h3 { font-size: 12px; font-weight: 600; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .muted { color: var(--muted); } .small { font-size: 12px; }
+  nav { display: flex; gap: 4px; margin-top: 12px; }
+  nav a { padding: 8px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; font-weight: 500; }
+  nav a.on { color: var(--text); border-bottom-color: var(--accent); }
+  nav a .badge { margin-left: 6px; }
+  main { padding: 20px 24px 48px; max-width: 1180px; margin: 0 auto; }
+  @media (max-width: 700px) { main { padding: 16px; } header { padding: 14px 16px 0; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; white-space: nowrap; }
+  a { color: var(--accent); }
+  .chip { display: inline-block; white-space: nowrap; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--soft); color: var(--muted); }
+  .chip.allow, .chip.good { color: var(--good); background: var(--good-bg); }
+  .chip.hold, .chip.ask, .chip.warn { color: var(--warn); background: var(--warn-bg); }
+  .chip.deny, .chip.suspend, .chip.bad { color: var(--bad); background: var(--bad-bg); }
+  .badge { display: inline-block; min-width: 1.5em; text-align: center; padding: 0 6px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--bad); color: var(--panel); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .n { font-size: 26px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 12px; }
+  .tile.alert { border-color: var(--bad); } .tile.alert .n { color: var(--bad); }
+  .tile.calm .n { color: var(--good); }
+  .item { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .item:first-of-type { padding-top: 0; } .item:last-child { border-bottom: 0; padding-bottom: 0; }
+  .item .meta { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .item .why { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .item .acts { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .mono, pre, code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .cmd { background: var(--soft); border-radius: 6px; padding: 6px 10px; max-height: 120px; overflow: auto; }
+  button { font: inherit; cursor: pointer; }
+  .btn { padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .btn.primary { border-color: var(--accent); background: var(--accent); color: var(--panel); font-weight: 600; }
+  .btn:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .bars { display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 12px; align-items: center; }
+  .bars .track { height: 8px; border-radius: 4px; background: var(--soft); overflow: hidden; }
+  .bars .track i { display: block; height: 100%; background: var(--bad); border-radius: 4px; }
+  .banner { padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); } .banner.info { background: var(--accent-bg); color: var(--text); }
+  .rows tr { cursor: pointer; } .rows tbody tr:hover { background: var(--soft); }
+  .task { max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-bottom: 10px; overflow: hidden; }
+  .step.refused { border-color: var(--bad); }
+  .step .head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+  .step .why { color: var(--muted); font-size: 13px; flex: 1 1 320px; }
+  .step .body { padding: 9px 14px; }
+  .step .note { padding: 0 14px 9px; color: var(--muted); font-size: 13px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+  .kv .k { color: var(--muted); font-size: 12px; white-space: nowrap; padding-top: 2px; }
+  ul.plain { margin: 0; padding-left: 18px; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  .back { display: inline-block; margin-bottom: 12px; text-decoration: none; }
+</style>
+<link rel="stylesheet" href="/test/app.css" id="test-css" disabled>
+</head>
+<body>
+<header>
+  <div class="top"><h1>Risk Monitor</h1><span id="health" class="muted small"></span></div>
+  <nav><a href="#/protect" id="nav-protect">Protect</a><a href="#/test/findings" id="nav-test" hidden>Test</a><a href="#/policy" id="nav-policy">Policy</a></nav>
+</header>
+<main id="main"><p class="empty">Loading…</p></main>
+
+<script>
+"use strict";
+const main = document.getElementById("main");
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v; else if (k.startsWith("on")) n.addEventListener(k.slice(2), v); else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false && kid !== "") n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return n;
+};
+const get = path => fetch(path).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const post = async path => { const r = await fetch(path, { method: "POST", headers: { "X-Riskmon": "1" }, body: "{}" }); if (!r.ok) alert((await r.json().catch(() => ({}))).error || "That did not work."); };
+const ago = ts => { const s = Date.now() / 1000 - ts; return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " days ago"; };
+const WORD = { allow: "allowed", ask: "asked", hold: "held", deny: "denied", suspend: "suspended" };
+const RULES = { outside_write: "Writing outside the workspace", read_only_write: "Changing a read-only path", whole_machine_search: "Searching the whole machine or home directory",
+  outside_search: "Searching outside the workspace", outside_read: "Reading outside the workspace", unlisted_host: "Contacting a host off the allowlist", protected_path: "Touching a protected path", unknown_program: "Running an unlisted program" };
+const HANDLING = { score: ["Scored like anything else", ""], confirm: ["A person must agree", "warn"], deny: ["Refused", "bad"] };
+let timer = null, testMounted = false, overview = null;
+
+async function act(path) { await post(path); route(); }
+
+function pendingItem(p) {
+  return el("div", { class: "item" },
+    el("div", { class: "meta" }, ago(p.ts), " · ", el("span", { class: "chip warn" }, p.kind), " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(p.session_id) }, "open the session")),
+    p.task ? el("div", {}, el("span", { class: "muted" }, "Task: "), p.task) : null,
+    el("pre", { class: "cmd", style: "margin-top:6px" }, p.target),
+    el("div", { class: "why" }, [p.reason, p.judge ? "judge: " + p.judge : ""].filter(Boolean).join(" · ")),
+    el("div", { class: "acts" }, el("button", { class: "btn primary", onclick: () => act(`/api/events/${p.id}/false-positive`) }, "Approve"),
+      el("button", { class: "btn", onclick: () => act(`/api/events/${p.id}/dismiss`) }, "Keep it refused")));
+}
+
+async function protectView() {
+  let o, pending, incidents, sessions;
+  try { [o, pending, incidents, sessions] = await Promise.all([get("/api/overview"), get("/api/pending"), get("/api/incidents"), get("/api/sessions")]); }
+  catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The daemon is not answering.")); return; }
+  overview = o; chrome();
+  const tile = (n, label, cls) => el("div", { class: "tile " + (cls || "") }, el("div", { class: "n" }, n), el("div", { class: "l" }, label));
+  const stopped = (o.stopped_week.deny || 0) + (o.stopped_week.suspend || 0);
+  const tiles = el("div", { class: "tiles" },
+    tile(o.pending, "waiting for your review", o.pending ? "alert" : "calm"),
+    tile(o.suspended.length, "sessions suspended", o.suspended.length ? "alert" : "calm"),
+    tile(stopped, "actions refused, last 7 days"), tile(o.sessions_week, "sessions, last 7 days"), tile(o.actions_week, "actions checked, last 7 days"));
+  const empty = !o.sessions_all ? el("div", { class: "banner info" }, el("div", {}, el("b", {}, "Nothing has been monitored yet. "),
+    "Turn protection on for every session with ", el("code", {}, "riskmon init --user"), ", then work as usual; what the monitor sees will appear here.",
+    o.test_area ? [" Meanwhile, the ", el("a", { href: "#/test/findings" }, "Test area"), " shows how five models behaved in scenarios built to tempt them."] : null)) : null;
+  const queue = el("section", { class: "panel" }, el("h3", {}, `Waiting for your review · ${pending.length}`),
+    pending.length ? pending.map(pendingItem) : el("p", { class: "muted", style: "margin:0" }, "Nothing is waiting. Actions that need a person's agreement in an unattended run appear here."));
+  const suspended = sessions.filter(s => s.suspended);
+  const stoppedSessions = suspended.length ? el("section", { class: "panel" }, el("h3", {}, `Suspended sessions · ${suspended.length}`), suspended.map(s => el("div", { class: "item" },
+    el("div", { class: "meta" }, ago(s.updated), " · ", el("a", { href: "#/protect/session/" + encodeURIComponent(s.id) }, "open the session")),
+    el("div", {}, s.task || "(no task recorded)"), el("div", { class: "why" }, s.suspended_reason),
+    el("div", { class: "acts" }, el("button", { class: "btn", onclick: () => act(`/api/sessions/${encodeURIComponent(s.id)}/resume`) }, "Resume session"))))) : null;
+  const top = Math.max(1, ...o.kinds_week.map(k => k[1]));
+  const kinds = o.kinds_week.length ? el("section", { class: "panel" }, el("h3", {}, "What was stopped or held, last 7 days"),
+    el("div", { class: "bars" }, o.kinds_week.flatMap(([label, n]) => [el("div", {}, label), el("div", { class: "track" }, el("i", { style: `width:${Math.round(100 * n / top)}%` })), el("div", { class: "muted" }, n)]))) : null;
+  const feed = el("section", { class: "panel" }, el("h3", {}, "Recently stopped or held"), incidents.length ? el("div", { class: "scroll" }, el("table", { class: "rows" },
+    el("thead", {}, el("tr", {}, ["When", "What happened", "Kind", "Action"].map(h => el("th", {}, h)))),
+    el("tbody", {}, incidents.slice(0, 25).map(i => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(i.session_id) + "?e=" + i.id },
+      el("td", { class: "muted", style: "white-space:nowrap" }, ago(i.ts)), el("td", {}, el("span", { class: "chip " + i.verdict }, WORD[i.verdict]), i.would ? [" ", el("span", { class: "chip warn" }, "would be held")] : null,
+        i.review ? [" ", el("span", { class: "muted small" }, i.review === "dismissed" ? "kept refused" : "overturned")] : null),
+      el("td", {}, i.kind), el("td", {}, el("div", { class: "mono task" }, i.target))))))) : el("p", { class: "muted", style: "margin:0" }, "Nothing has been stopped."));
+  const list = el("section", { class: "panel" }, el("h3", {}, "Sessions"), sessions.length ? el("div", { class: "scroll" }, el("table", { class: "rows" },
+    el("thead", {}, el("tr", {}, ["Last active", "Task", "Actions", "Refused", ""].map(h => el("th", {}, h)))),
+    el("tbody", {}, sessions.slice(0, 40).map(s => el("tr", { tabindex: 0, onclick: () => location.hash = "#/protect/session/" + encodeURIComponent(s.id) },
+      el("td", { class: "muted", style: "white-space:nowrap" }, ago(s.updated)), el("td", {}, el("div", { class: "task" }, s.task || "(no task recorded)")),
+      el("td", { class: "num" }, s.step), el("td", { class: "num" }, s.denies),
+      el("td", {}, s.suspended ? el("span", { class: "chip bad" }, "suspended") : null, s.unattended ? [" ", el("span", { class: "chip" }, s.holds ? `unattended · ${s.holds} held` : "unattended")] : null)))))) : el("p", { class: "muted", style: "margin:0" }, "No sessions yet."));
+  const y = window.scrollY;
+  main.replaceChildren(...[empty, tiles, queue, stoppedSessions, kinds, feed, list].filter(Boolean));
+  window.scrollTo(0, y);
+}
+
+function reviewButtons(e) {
+  const d = e.detail;
+  if (d.review) return el("span", { class: "muted small" }, d.review === "dismissed" ? "kept refused by a person" : e.verdict === "hold" ? "approved by a person" : "marked a false positive");
+  if (e.verdict === "allow" || d.carried == null || (d.facets || []).includes("monitor_tamper")) return null;
+  return [el("button", { class: "btn", onclick: () => act(`/api/events/${e.id}/false-positive`) }, e.verdict === "hold" ? "Approve" : "Mark false positive"),
+    e.verdict === "hold" ? el("button", { class: "btn", onclick: () => act(`/api/events/${e.id}/dismiss`) }, "Keep it refused") : null];
+}
+
+async function sessionView(id, focus) {
+  let events, report, sessions;
+  try { [events, report, sessions] = await Promise.all([get("/api/events?session_id=" + encodeURIComponent(id)), get("/api/report?session_id=" + encodeURIComponent(id)), get("/api/sessions")]); }
+  catch (e) { main.replaceChildren(el("p", { class: "empty" }, "This session could not be loaded.")); return; }
+  const s = sessions.find(x => x.id === id) || {};
+  const row = (k, v) => [el("div", { class: "k" }, k), el("div", {}, v)];
+  const list = items => items.length ? el("ul", { class: "plain" }, items.map(i => el("li", {}, i))) : el("span", { class: "muted" }, "None");
+  const counts = ["allow", "ask", "hold", "deny", "suspend"].filter(v => (report.verdicts || {})[v]).map(v => [el("span", { class: "chip " + v }, `${WORD[v]} ${report.verdicts[v]}`), " "]);
+  const summary = report.verdicts ? el("section", { class: "panel" }, el("h3", {}, "What this session touched"), el("div", { class: "kv" },
+    row("Actions", [`${report.actions}  `, counts, report.failed_actions ? `· ${report.failed_actions} failed when run` : ""]),
+    row("Task", list((report.tasks || []).map(t => t.slice(0, 400)))),
+    row("Workspace", [el("span", { class: "mono" }, report.workspace || "unknown"), el("span", { class: "muted" }, ` · ${report.files.read_inside} reads and ${report.files.written_inside} writes inside it`)]),
+    row("Outside the workspace", [report.regions.length ? el("div", { class: "mono" }, report.regions.join(" → ")) : null,
+      list([...report.files.outside.map(f => [f.write ? "wrote " : "read ", el("span", { class: "mono" }, f.path), f.ran ? "" : " (did not run)"]), ...report.searches.map(x => [x.scope, x.ran ? "" : " (did not run)"])])]),
+    row("Sensitive targets", list(report.sensitive.map(x => [x.what + "  ", el("span", { class: "mono" }, x.target), x.ran ? "" : " (did not run)"]))),
+    row("Network", list(report.hosts.map(h => [el("span", { class: "mono" }, h.host), " ", el("span", { class: "chip " + (h.allowed ? "good" : "warn") }, h.allowed ? "allowlisted" : "not allowlisted"),
+      el("span", { class: "muted" }, h.indirect ? " reached by a script it ran" : ` ${h.attempts} attempted, ${h.ran} run`)]))))) : null;
+  const steps = [...events].reverse().map((e, i) => {
+    const d = e.detail, refused = e.verdict !== "allow";
+    const why = [...(d.combos || []), ...(d.findings || []), d.rationale ? "judge: " + d.rationale : ""].filter(Boolean).join(" · ");
+    return el("div", { class: "step" + (refused ? " refused" : ""), id: "e" + e.id },
+      el("div", { class: "head" }, el("span", { class: "muted" }, i + 1), el("span", { class: "chip " + e.verdict }, WORD[e.verdict]), d.would ? el("span", { class: "chip warn" }, "would be held") : null,
+        el("span", { class: "muted small" }, `score ${e.score} · ${e.tier} · ${new Date(e.ts * 1000).toLocaleTimeString()}`), el("span", { class: "why" }, why), reviewButtons(e)),
+      el("div", { class: "body" }, el("pre", {}, `${e.tool}: ${e.target}`)),
+      d.said ? el("div", { class: "note" }, "Model said: " + d.said.slice(-300)) : null,
+      (d.outcome || {}).status === "failed" ? el("div", { class: "note" }, "Failed when run: " + (d.outcome.excerpt || "").slice(0, 240)) : null);
+  });
+  main.replaceChildren(...[
+    el("a", { class: "back", href: "#/protect" }, "← Back to the overview"),
+    s.suspended ? el("div", { class: "banner bad" }, el("span", {}, "Session suspended: " + s.suspended_reason), el("button", { class: "btn", onclick: () => act(`/api/sessions/${encodeURIComponent(id)}/resume`) }, "Resume session")) : null,
+    el("section", { class: "panel" }, el("h2", {}, s.task || "(no task recorded)"), el("div", { class: "muted small mono" }, id), el("div", { class: "muted small" }, [s.unattended ? "unattended" : "attended", s.observe ? "observe mode" : "", s.updated ? "last active " + ago(s.updated) : ""].filter(Boolean).join(" · "))),
+    summary, el("h3", { style: "margin:20px 0 10px" }, `Every action · ${events.length}`), ...steps].filter(Boolean));
+  if (focus) document.getElementById("e" + focus)?.scrollIntoView({ block: "center" }); else window.scrollTo(0, 0);
+}
+
+async function policyView() {
+  let p;
+  try { p = await get("/api/policy"); } catch (e) { main.replaceChildren(el("p", { class: "empty" }, "The policy could not be loaded.")); return; }
+  const items = xs => xs.length ? el("div", { class: "mono" }, xs.map(x => el("div", {}, x))) : el("span", { class: "muted" }, "None declared");
+  const handling = (title, rules, note) => el("section", { class: "panel" }, el("h3", {}, title), el("p", { class: "muted", style: "margin:0 0 10px" }, note),
+    el("div", { class: "scroll" }, el("table", {}, el("tbody", {}, Object.entries(RULES).map(([key, label]) => { const [word, tone] = HANDLING[rules[key] || "score"];
+      return el("tr", {}, el("td", {}, label), el("td", {}, el("span", { class: "chip " + tone }, word))); })))));
+  const t = p.thresholds;
+  main.replaceChildren(
+    el("div", { class: "banner info" }, el("div", {}, "This is the policy in force. To change it, put only the keys you want to change in ", el("code", {}, "policy.json"), " in the monitor's home directory and restart the daemon. Editing it here comes next.")),
+    handling("When nobody is watching", p.unattended, "What happens to each kind of action in an unattended run. Refusals of this kind tell the agent which limit it met."),
+    handling("When someone is at the keyboard", p.attended, "In an attended session a person can be asked, so less is refused outright."),
+    el("section", { class: "panel" }, el("h3", {}, "Hosts an agent may contact"), items(p.allow_hosts)),
+    el("section", { class: "panel" }, el("h3", {}, "Paths declared read-only"), items(p.read_only), el("p", { class: "muted small", style: "margin:8px 0 0" }, "Relative paths are taken from each session's workspace. Reading and running what is there is unaffected.")),
+    el("section", { class: "panel" }, el("h3", {}, "Protected paths"), items(p.protected_paths)),
+    el("section", { class: "panel" }, el("h3", {}, "When the score alone decides"), el("div", { class: "kv" },
+      el("div", { class: "k" }, "Below " + t.ask), el("div", {}, "allowed"), el("div", { class: "k" }, `${t.ask} to ${t.deny - 1}`), el("div", {}, "a person is asked, or the action is held when nobody is there"),
+      el("div", { class: "k" }, `${t.deny} to ${t.suspend - 1}`), el("div", {}, "refused"), el("div", { class: "k" }, t.suspend + " and above"), el("div", {}, "the session is suspended"),
+      el("div", { class: "k" }, "Also suspended after"), el("div", {}, `${p.suspend_after_denies} refusals, or ${p.max_holds} actions held in an unattended run`))));
+}
+
+function chrome() {
+  if (!overview) return;
+  document.getElementById("health").textContent = overview.judge ? "Model judge: on" : `Model judge: off (${overview.judge_note || "not installed"})`;
+  const protect = document.getElementById("nav-protect");
+  protect.replaceChildren("Protect", overview.pending ? el("span", { class: "badge", title: "waiting for your review" }, overview.pending) : "");
+  document.getElementById("nav-test").hidden = !overview.test_area;
+}
+
+async function route() {
+  clearInterval(timer);
+  if (!overview) { try { overview = await get("/api/overview"); } catch (e) { overview = { test_area: false, pending: 0 }; } chrome(); }
+  let hash = location.hash || "";
+  if (!hash || hash === "#/") { location.replace(overview.sessions_all || !overview.test_area ? "#/protect" : "#/protect"); hash = "#/protect"; }
+  const area = hash.startsWith("#/test") ? "test" : hash.startsWith("#/policy") ? "policy" : "protect";
+  for (const name of ["protect", "test", "policy"]) document.getElementById("nav-" + name).classList.toggle("on", name === area);
+  if (area === "test") {
+    if (!overview.test_area) { main.replaceChildren(el("p", { class: "empty" }, "The testing area is not installed with this monitor.")); return; }
+    if (!testMounted) {
+      document.getElementById("test-css").disabled = false;
+      await new Promise((ok, no) => { const s = el("script", { src: "/test/app.js" }); s.onload = ok; s.onerror = no; document.head.append(s); });
+      testMounted = true;
+      return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true });
+    }
+    if (!main.querySelector(".subnav")) return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true });
+    return window.TestArea.route();
+  }
+  if (area === "policy") return policyView();
+  const session = hash.match(/^#\/protect\/session\/([^?]+)(?:\?e=(\d+))?/);
+  if (session) return sessionView(decodeURIComponent(session[1]), session[2]);
+  await protectView();
+  timer = setInterval(() => { if ((location.hash || "#/protect") === "#/protect" && !document.querySelector("button:focus")) protectView(); }, 5000);
+}
+window.addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>

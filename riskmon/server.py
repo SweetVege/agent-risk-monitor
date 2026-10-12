@@ -2,20 +2,31 @@
 from __future__ import annotations
 
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import report
+from . import insights, report
 from .engine import Engine
 from .events import from_claude_code
 from .optional import drift
 
-_DASHBOARD = Path(__file__).with_name("dashboard.html")
+_PAGE = Path(__file__).with_name("app.html")
 _MAX_BODY = 4 * 1024 * 1024
 
 
-def make_handler(engine: Engine):
+def policy_view(cfg: dict) -> dict:
+    """The policy in force, as the console shows it: the limits a person set, without the rule tables behind them."""
+    scope = cfg["scope"]
+    return {
+        "thresholds": cfg["thresholds"], "suspend_after_denies": cfg["suspend_after_denies"], "max_holds": cfg["unattended"]["max_holds"],
+        "allow_hosts": cfg["allow_hosts"], "protected_paths": cfg["protected_paths"], "read_only": scope.get("read_only", []), "extra_dirs": scope.get("extra_dirs", []),
+        "attended": scope.get("attended", {}), "unattended": scope.get("unattended", {}),
+    }
+
+
+def make_handler(engine: Engine, extension=None):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # the audit log is in SQLite; no access log on stderr
             pass
@@ -57,8 +68,29 @@ def make_handler(engine: Engine):
             if url.path == "/api/report":
                 sid = parse_qs(url.query).get("session_id", [""])[0]
                 return self._send(200, report.build(engine.store, sid, engine.cfg))
+            if url.path == "/api/overview":
+                return self._send(200, {**insights.overview(engine.store), "judge": engine.judge.available, "judge_note": engine.judge.unavailable or engine.judge.last_error,
+                                        "test_area": extension is not None})
+            if url.path == "/api/pending":
+                return self._send(200, insights.pending(engine.store))
+            if url.path == "/api/incidents":
+                return self._send(200, insights.incidents(engine.store))
+            if url.path == "/api/policy":
+                return self._send(200, policy_view(engine.cfg))
             if url.path == "/":
-                return self._send(200, _DASHBOARD.read_bytes(), "text/html")
+                return self._send(200, _PAGE.read_bytes(), "text/html")
+            if extension is not None and url.path.startswith("/test/"):
+                found = extension.get(url.path[len("/test"):])
+                if found is not None:
+                    body, ctype, name = found
+                    if name:
+                        self.send_response(200)
+                        self.send_header("Content-Type", ctype)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+                        self.end_headers()
+                        return self.wfile.write(body)
+                    return self._send(200, body, ctype.split(";")[0])
             self._send(404, {"error": "not found"})
 
         def do_POST(self):
@@ -69,6 +101,15 @@ def make_handler(engine: Engine):
                 payload = self._body()
             except ValueError as e:
                 return self._send(400, {"error": str(e)})
+
+            if extension is not None and path.startswith("/test/"):
+                origin = self.headers.get("Origin") or ""
+                if self.headers.get("X-Riskmon") != "1" or (origin and not re.fullmatch(r"http://(127\.0\.0\.1|localhost):\d+", origin)):
+                    return self._send(403, {"error": "forbidden"})
+                try:
+                    return self._send(*extension.post(path[len("/test"):], payload))
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
 
             if path == "/v1/hook":
                 name = payload.get("hook_event_name")
@@ -96,16 +137,16 @@ def make_handler(engine: Engine):
                 return self._send(200, {"verdict": "allow"})
 
             parts = path.strip("/").split("/")
-            if len(parts) == 4 and parts[0] == "api" and parts[3] in ("resume", "false-positive"):
+            if len(parts) == 4 and parts[0] == "api" and parts[3] in ("resume", "false-positive", "dismiss"):
                 # a custom header forces a preflight on cross-site browser requests, and we don't answer preflights
                 if self.headers.get("X-Riskmon") != "1":
                     return self._send(403, {"error": "missing X-Riskmon header"})
                 if parts[1] == "sessions" and parts[3] == "resume":
                     engine.resume(parts[2])
                     return self._send(200, {"ok": True})
-                if parts[1] == "events" and parts[3] == "false-positive" and parts[2].isdigit():
+                if parts[1] == "events" and parts[3] in ("false-positive", "dismiss") and parts[2].isdigit():
                     try:
-                        engine.mark_false_positive(int(parts[2]))
+                        (engine.mark_false_positive if parts[3] == "false-positive" else engine.dismiss)(int(parts[2]))
                     except KeyError:
                         return self._send(404, {"error": "no such event"})
                     except ValueError as e:
@@ -117,8 +158,10 @@ def make_handler(engine: Engine):
 
 
 def serve(engine: Engine, port: int) -> None:
+    from .optional import test_area
+
     try:
-        httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine))
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine, test_area()))
     except OSError as e:
         # usually a daemon that is already running, by hand or as the login service
         raise SystemExit(f"cannot listen on 127.0.0.1:{port}: {e.strerror}. Is the daemon already running? Check with: riskmon doctor")

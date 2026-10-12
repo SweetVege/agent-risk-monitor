@@ -18,4 +18,4 @@ riskmon = "riskmon.__main__:main"
 packages = ["riskmon"]
 
 [tool.setuptools.package-data]
-riskmon = ["dashboard.html", "default_policy.json"]
+riskmon = ["app.html", "default_policy.json"]

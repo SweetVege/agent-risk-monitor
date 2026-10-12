@@ -43,6 +43,15 @@ class _NoDrift:
         return cfg["thresholds"]["gray"]
 
 
+def test_area():
+    """The model-testing area of the console, when the evaluation harness is installed alongside. None otherwise."""
+    try:
+        from harness.viewer import mount
+    except ImportError:
+        return None
+    return mount.Extension()
+
+
 try:
     from . import drift
     HAS_DRIFT = True

@@ -117,6 +117,17 @@ class Engine:
             self.store.save_state(st, time.time())
             self.store.set_event_detail(event_id, {**detail, "review": "false_positive"})
 
+    def dismiss(self, event_id: int) -> None:
+        """A person has seen a held action and does not approve it: it leaves the queue and stays refused."""
+        row = self.store.get_event(event_id)
+        if row is None:
+            raise KeyError(event_id)
+        if row["verdict"] != "hold":
+            raise ValueError("only an action that is waiting for review can be dismissed")
+        if row["detail"].get("review"):
+            raise ValueError("this event is already reviewed")
+        self.store.set_event_detail(event_id, {**row["detail"], "review": "dismissed"})
+
     def _session_cfg(self, st: state.SessionState) -> dict:
         """The policy plus the extra hosts and directories declared when this run was launched."""
         if not (st.scope_hosts or st.scope_dirs):

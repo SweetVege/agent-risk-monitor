@@ -56,9 +56,12 @@ When the daemon is not running, the hook denies actions such as network access a
 
 | To | Do this |
 |---|---|
+| See what is waiting for you and what was stopped | The console's Protect page, at http://127.0.0.1:8787 |
 | See what a session touched | Open it in the console, or `riskmon report <session id>` |
 | Resume a suspended session | "Resume session" in the console, or `riskmon resume <session id>` |
-| Overturn a wrong verdict, or approve a held action | "Mark false positive" or "Approve" under that row in the console |
+| Approve a held action, or keep it refused | "Approve" or "Keep it refused" in the console's review queue |
+| Overturn a wrong verdict | "Mark false positive" on that action in the session |
+| See the policy in force | The console's Policy page |
 | Run a task unattended | `riskmon run --cwd <project> "task"`; needs the `claude` CLI |
 | Change the policy | Create `~/.riskmon/policy.json` with just the keys you change, then restart the daemon |
 
@@ -86,7 +89,7 @@ The policy and the audit data live in `~/.riskmon/`; set `RISKMON_HOME` to move 
 | `riskmon/state.py` | L1, trajectory state. Carried score, behaviour tags, combination rules, the summary a judge reads |
 | `riskmon/optional.py` | The slots for the judge and the drift score, and what stands in when they are absent |
 | `riskmon/engine.py` | Ties the tiers together and maps the result to a verdict |
-| `riskmon/server.py`, `dashboard.html` | The local daemon and the console |
+| `riskmon/server.py`, `app.html`, `insights.py` | The local daemon and the console |
 | `riskmon/report.py` | The activity report |
 | `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
