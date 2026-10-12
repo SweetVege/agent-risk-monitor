@@ -17,11 +17,31 @@ from .events import from_claude_code
 HTTP_TIMEOUT = 12  # must stay below the hook timeout configured in settings.json
 
 
+def client() -> dict:
+    """Where this machine's hooks send actions: the team's daemon if it has joined one, otherwise the one on this machine.
+
+    The environment wins over the file, for runners that are configured that way and keep nothing on disk.
+    """
+    server, token = os.environ.get("RISKMON_SERVER", ""), os.environ.get("RISKMON_TOKEN", "")
+    if not server:
+        try:
+            saved = json.loads((config.home() / "client.json").read_text(encoding="utf-8"))
+            server, token = str(saved.get("server", "")), str(saved.get("token", ""))
+        except (OSError, ValueError):
+            pass
+    return {"server": server.rstrip("/"), "token": token}
+
+
 def ask_daemon(payload: dict, port: int) -> dict:
+    where = client()
+    headers = {"Content-Type": "application/json"}
+    if where["server"]:
+        headers["Authorization"] = "Bearer " + where["token"]
+        payload = {**payload, "riskmon_user": os.environ.get("USER", "")}
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}/v1/hook",
+        (where["server"] or f"http://127.0.0.1:{port}") + "/v1/hook",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
         return json.loads(resp.read())

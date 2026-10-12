@@ -87,6 +87,8 @@ class Store:
                     "holds": st.get("holds", 0),
                     "unattended": st.get("unattended", False),
                     "project": st.get("project", ""),
+                    "machine": st.get("machine", ""),
+                    "user": st.get("user", ""),
                     "observe": st.get("observe", False),
                     "suspended": st["suspended"],
                     "suspended_reason": st["suspended_reason"],

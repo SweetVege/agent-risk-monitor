@@ -78,6 +78,35 @@ Dictionaries are merged level by level and lists are replaced whole, so the `all
 
 The policy and the audit data live in `~/.riskmon/`; set `RISKMON_HOME` to move them. Running straight from a checkout (`python3 -m riskmon ...`) uses the checkout itself.
 
+## One daemon for a team
+
+By default the daemon serves one person on one machine and asks nobody who they are. It can instead be shared: machines that run agents send their actions to it, and the people who review them use its console from their own browsers. A shared daemon answers nothing without a token.
+
+There are two kinds of token and neither does the other's job. A **machine token** lets a machine have its agents' actions checked, and nothing else: it cannot read the audit log, approve an action, resume a session or change the policy. That matters because the token sits on the machine where the agent runs. A **member token** is a person's. A reviewer sees everything and decides held actions; an admin also changes the policy. Every review is recorded with the name of the member who made it.
+
+On the machine that hosts the daemon:
+
+```bash
+riskmon team add-member lead --role admin     # prints the token once; only its hash is kept
+riskmon team add-member rui --role reviewer
+riskmon team add-machine ci-runner-1
+riskmon serve --listen 0.0.0.0 --cert fullchain.pem --key privkey.pem
+```
+
+The daemon will not start as a shared one until there is an admin. Without `--cert` and `--key` it serves plain HTTP and says so; tokens then cross the network unprotected, so do that only behind something that provides TLS itself. `riskmon team list` shows who has access and `riskmon team remove <name>` ends it at once.
+
+On each machine that runs agents:
+
+```bash
+riskmon join --server https://monitor.example.internal:8787
+```
+
+It asks for the machine token without showing it, checks that the daemon accepts it, keeps it in a file only that user can read, and turns protection on for every Claude Code session that user starts. `riskmon leave` undoes it. If the daemon cannot be reached, the hook falls back to the rules it has locally: ordinary work goes through and anything beyond the default policy is refused.
+
+Members open the daemon's address in a browser and paste their token, which is kept for that browser tab only. Evaluations are not started from a shared daemon's page.
+
+What a shared daemon does not do yet: projects are still matched by directory, so the same repository checked out at different paths on different machines is not recognised as one project, and nobody is notified when something is waiting for review.
+
 ## Layout
 
 | File | Role |
@@ -91,6 +120,7 @@ The policy and the audit data live in `~/.riskmon/`; set `RISKMON_HOME` to move 
 | `riskmon/optional.py` | The slots for the judge and the drift score, and what stands in when they are absent |
 | `riskmon/engine.py` | Ties the tiers together and maps the result to a verdict |
 | `riskmon/server.py`, `app.html`, `insights.py` | The local daemon and the console |
+| `riskmon/access.py` | Who may talk to a shared daemon: machine and member tokens |
 | `riskmon/report.py` | The activity report |
 | `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
@@ -168,3 +198,4 @@ python3 -m evals.run
 - **The experiment records describe the full monitor.** The runs in `evals/experiments/` had the model judge and, in the later ones, the drift score. Scores and verdicts quoted there will not all reproduce with this repository alone.
 - **The thresholds and point values are first guesses.** They have not been calibrated on real data.
 - **Tested on macOS only**, with Claude Code as the only agent.
+- **The shared daemon has only been exercised on one machine.** Its tests and a hands-on check ran the daemon and a joining client on the same computer over the loopback address. It has not been run across a real network, behind a proxy, or with a real certificate.

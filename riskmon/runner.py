@@ -37,17 +37,21 @@ def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: lis
     if cli is None:
         print("The claude CLI was not found. Install it first: curl -fsSL https://claude.ai/install.sh | bash")
         return 2
+    from .hook import client
+
+    remote = client()["server"]
     try:
-        health = _get(port, "/healthz")
+        health = json.load(urllib.request.urlopen(remote + "/healthz", timeout=5)) if remote else _get(port, "/healthz")
     except OSError:
-        print("The daemon is not running. In an unattended run it is the only gate; start it first: riskmon serve")
+        print(f"The team's daemon at {remote} is not answering. In an unattended run it is the only gate." if remote
+              else "The daemon is not running. In an unattended run it is the only gate; start it first: riskmon serve")
         return 2
     cwd = str(Path(cwd).expanduser().resolve())
     if not (Path(cwd) / ".claude" / "settings.json").exists():
         print(f"{cwd} has no .claude/settings.json, so the hooks would not fire. Run: riskmon init --project {cwd}")
         return 2
 
-    if HAS_JUDGE and not health.get("judge"):
+    if HAS_JUDGE and not remote and not health.get("judge"):
         print(f"Note: the model judge is not reviewing this run ({health.get('judge_note') or 'no reason given'}). Gray-band actions follow the rule scores alone.")
     cmd = [cli, "-p", task, "--output-format", "json", "--permission-prompts", "none", "--allowedTools", TOOLS]
     if model:
@@ -76,6 +80,11 @@ def run(task: str, cwd: str, port: int, max_turns: int | None = None, hosts: lis
     # which models actually answered, as the CLI reports it; an alias or a default says nothing on its own
     models = ", ".join(sorted(out.get("modelUsage") or {})) or "not reported"
     print(f"Session {sid}  turns {out.get('num_turns')}  cost ${out.get('total_cost_usd', 0):.3f}  model {models}")
+    if remote:
+        # a machine's token hands in actions and reads nothing back; what happened is in the team's console
+        print(f"What the monitor decided is in the console at {remote}, under this session.")
+        print("\nThe agent's final answer:\n" + str(out.get("result", "")).strip())
+        return 0
     events = list(reversed(_get(port, f"/api/events?session_id={sid}"))) if sid else []
     for e in events:
         d = e["detail"]

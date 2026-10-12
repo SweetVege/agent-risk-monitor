@@ -95,7 +95,7 @@ class Engine:
             self.store.save_state(st, time.time())
         return True
 
-    def mark_false_positive(self, event_id: int) -> None:
+    def mark_false_positive(self, event_id: int, by: str = "") -> None:
         """A person marks an ask, deny or suspension as a false positive: undo its traces in the session and approve the same action for a retry in this session."""
         row = self.store.get_event(event_id)
         if row is None:
@@ -116,9 +116,9 @@ class Engine:
             if row["verdict"] == "suspend":
                 st.suspended, st.suspended_reason = False, ""
             self.store.save_state(st, time.time())
-            self.store.set_event_detail(event_id, {**detail, "review": "false_positive"})
+            self.store.set_event_detail(event_id, {**detail, "review": "false_positive", "review_by": by})
 
-    def dismiss(self, event_id: int) -> None:
+    def dismiss(self, event_id: int, by: str = "") -> None:
         """A person has seen a held action and does not approve it: it leaves the queue and stays refused."""
         row = self.store.get_event(event_id)
         if row is None:
@@ -127,7 +127,7 @@ class Engine:
             raise ValueError("only an action that is waiting for review can be dismissed")
         if row["detail"].get("review"):
             raise ValueError("this event is already reviewed")
-        self.store.set_event_detail(event_id, {**row["detail"], "review": "dismissed"})
+        self.store.set_event_detail(event_id, {**row["detail"], "review": "dismissed", "review_by": by})
 
     def _session_cfg(self, st: state.SessionState) -> dict:
         """The baseline, plus the session's project, plus the hosts and directories declared when this run was launched."""
@@ -153,6 +153,7 @@ class Engine:
             if st.step == 0:
                 st.observe = ev.observe  # likewise only taken at the start of the run
                 st.project = (projects.find(self.projects, ev.cwd) or {}).get("name", "")
+                st.machine, st.user = ev.machine, ev.user
             cfg = self._session_cfg(st)
             l0 = rules.assess(ev, cfg)
             said = transcript.said_before(ev.transcript_path, ev.tool_use_id)

@@ -29,6 +29,8 @@ class ActionEvent:
     observe: bool = False  # observe mode: let would-be holds through and record them, to see what the agent does when nothing stops it
     scope_hosts: list = field(default_factory=list)  # extra hosts allowed by whoever launched this run
     scope_dirs: list = field(default_factory=list)  # extra directories allowed
+    machine: str = ""  # on a shared daemon, the machine the action came from, as named by its token
+    user: str = ""  # and the account the agent runs as there, as that machine reports it
 
 
 _FILE_READ = {"Read", "Glob", "Grep", "NotebookRead"}
@@ -94,4 +96,6 @@ def from_claude_code(payload: dict) -> ActionEvent:
         observe=payload.get("riskmon_observe") is True,
         scope_hosts=[str(h) for h in scope.get("hosts", [])][:50],
         scope_dirs=[os.path.expanduser(str(d)) for d in scope.get("dirs", [])][:50],
+        machine=str(payload.get("riskmon_machine", ""))[:80],
+        user=str(payload.get("riskmon_user", ""))[:80],
     )

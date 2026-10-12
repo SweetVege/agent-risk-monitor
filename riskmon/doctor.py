@@ -28,14 +28,27 @@ def check(project: str = ".") -> bool:
          f"policy: {user_policy}" if user_policy.exists() else f"policy: defaults (to change something, create {user_policy} with just the keys you change)")
     line(True, f"audit data: {config.data_dir()}")
 
-    print("Daemon")
+    from .hook import client
+
+    joined = client()["server"]
+    if joined:
+        print("Team daemon")
+        try:
+            with urllib.request.urlopen(joined + "/healthz", timeout=5) as resp:
+                json.load(resp)
+            line(True, f"this machine's sessions are checked at {joined}, which is answering")
+        except OSError as e:
+            line(False, f"this machine's sessions are checked at {joined}, which is not answering ({e})",
+                 "until it does, ordinary work goes through and anything beyond the default policy is refused")
+    print("Daemon on this machine" if joined else "Daemon")
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{cfg['port']}/healthz", timeout=3) as resp:
             health = json.load(resp)
         line(True, f"running on 127.0.0.1:{cfg['port']}")
     except OSError:
         health = None
-        line(False, f"not running on 127.0.0.1:{cfg['port']}", "start it: riskmon serve, or keep it running with: riskmon service install")
+        line(None if joined else False, f"not running on 127.0.0.1:{cfg['port']}" + (" (not needed: this machine has joined a team's daemon)" if joined else ""),
+             "" if joined else "start it: riskmon serve, or keep it running with: riskmon service install")
     from . import service
 
     kept = service.running()

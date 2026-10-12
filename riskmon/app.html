@@ -109,8 +109,25 @@ const el = (tag, attrs = {}, ...kids) => {
   for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false && kid !== "") n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return n;
 };
-const get = path => fetch(path).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
-const post = async path => { const r = await fetch(path, { method: "POST", headers: { "X-Riskmon": "1" }, body: "{}" }); if (!r.ok) alert((await r.json().catch(() => ({}))).error || "That did not work."); };
+// On a shared daemon every request carries the member's token. It is kept for this browser tab only.
+let token = ""; try { token = sessionStorage.getItem("riskmon_token") || ""; } catch (e) {}
+let me = null;
+const headers = extra => ({ ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) });
+const signedOut = r => { if (r.status === 401) { signIn(token ? "That token was not accepted." : ""); throw new Error("signed out"); } return r; };
+const get = path => fetch(path, { headers: headers({}) }).then(signedOut).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+const post = async path => { const r = signedOut(await fetch(path, { method: "POST", headers: headers({ "X-Riskmon": "1" }), body: "{}" })); if (!r.ok) alert((await r.json().catch(() => ({}))).error || "That did not work."); };
+
+function signIn(problem) {
+  clearInterval(timer);
+  const input = el("input", { type: "password", placeholder: "Member token", "aria-label": "Member token", autocomplete: "off", onkeydown: e => { if (e.key === "Enter") enter(); } });
+  const enter = () => { token = input.value.trim(); try { sessionStorage.setItem("riskmon_token", token); } catch (e) {} me = null; overview = null; testMounted = false; route(); };
+  document.querySelector("nav").hidden = true;
+  main.replaceChildren(el("section", { class: "panel", style: "max-width:460px;margin:48px auto" }, el("h2", {}, "Sign in"),
+    el("p", { class: "muted" }, "This daemon is shared. Paste the member token your administrator gave you. It is kept for this browser tab only."),
+    problem ? el("p", { class: "banner bad", style: "padding:8px 12px" }, problem) : null,
+    el("div", { class: "addrow" }, input, el("button", { class: "btn primary", onclick: enter }, "Sign in"))));
+  input.focus();
+}
 const ago = ts => { const s = Date.now() / 1000 - ts; return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " days ago"; };
 const WORD = { allow: "allowed", ask: "asked", hold: "held", deny: "denied", suspend: "suspended" };
 const RULES = { outside_write: "Writing outside the workspace", read_only_write: "Changing a read-only path", whole_machine_search: "Searching the whole machine or home directory",
@@ -215,7 +232,7 @@ async function sessionView(id, focus) {
 }
 
 const send = async (path, body) => {
-  const r = await fetch(path, { method: "POST", headers: { "X-Riskmon": "1", "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = signedOut(await fetch(path, { method: "POST", headers: headers({ "X-Riskmon": "1", "Content-Type": "application/json" }), body: JSON.stringify(body) }));
   if (!r.ok) { alert((await r.json().catch(() => ({}))).error || "That could not be saved."); return false; }
   return true;
 };
@@ -247,9 +264,10 @@ async function policyView() {
   const p = data.baseline, y = window.scrollY;
   const base = body => send("/api/policy/baseline", body);
   // with the testing area installed, a policy can be tried against the scenarios before any real session meets it
-  const tryIt = (source, what) => overview && overview.test_area ? el("p", { style: "margin:16px 0 0" }, el("a", { class: "btn", style: "text-decoration:none;display:inline-block", href: "#/test/run-new?policy=" + encodeURIComponent(source) }, "Test " + what),
+  const tryIt = (source, what) => overview && overview.test_area && !(me && me.test_runs === false) ? el("p", { style: "margin:16px 0 0" }, el("a", { class: "btn", style: "text-decoration:none;display:inline-block", href: "#/test/run-new?policy=" + encodeURIComponent(source) }, "Test " + what),
     el("span", { class: "muted small", style: "margin-left:10px" }, "Run the scenarios with these limits and see what they stop and what they let through.")) : null;
   const t = p.thresholds;
+  const readOnly = me && me.role !== "admin" ? el("div", { class: "banner info" }, "You can see the policy. Changing it takes an administrator.") : null;
   const baseline = el("section", { class: "panel" }, el("h2", {}, "Baseline"),
     el("p", { class: "muted", style: "margin:0 0 14px" }, "Every session follows this, in every project. Changes take effect on each session's next action."),
     el("h3", {}, "Hosts an agent may contact"), listEditor(p.allow_hosts, "api.example.org", v => base({ allow_hosts: v })),
@@ -281,13 +299,18 @@ async function policyView() {
   const name = el("input", { type: "text", placeholder: "Name, such as fx-tools", "aria-label": "Project name" }), root = el("input", { type: "text", placeholder: "/full/path/to/the/project", "aria-label": "Project directory", style: "flex:2 1 260px" });
   const create = el("section", { class: "panel" }, el("h3", {}, "Add a project"), el("p", { class: "muted", style: "margin:0 0 10px" }, "Give a directory its own scope: the hosts it needs, the paths that must not change there."),
     el("div", { class: "addrow" }, name, root, el("button", { class: "btn primary", onclick: async () => { if (await send("/api/policy/projects", { name: name.value, root: root.value })) policyView(); } }, "Add project")));
-  main.replaceChildren(baseline, el("h3", { style: "margin:24px 0 10px" }, `Projects · ${data.projects.length}`), ...data.projects.map(project), create);
+  main.replaceChildren(...[readOnly, baseline, el("h3", { style: "margin:24px 0 10px" }, `Projects · ${data.projects.length}`), ...data.projects.map(project), readOnly ? null : create].filter(Boolean));
+  // the daemon refuses these from anyone but an administrator, so they are not offered either
+  if (readOnly) { main.querySelectorAll("button, .addrow, a.btn").forEach(n => (n.matches("a") ? n.parentNode : n).remove()); main.querySelectorAll("select").forEach(s => { s.disabled = true; }); }
   window.scrollTo(0, y);
 }
 
 function chrome() {
   if (!overview) return;
-  document.getElementById("health").textContent = overview.judge ? "Model judge: on" : `Model judge: off (${overview.judge_note || "not installed"})`;
+  document.querySelector("nav").hidden = false;
+  const health = document.getElementById("health");
+  health.replaceChildren(overview.judge ? "Model judge: on" : `Model judge: off (${overview.judge_note || "not installed"})`,
+    ...(me && me.team ? [` · signed in as ${me.name} (${me.role}) · `, el("a", { href: "#", onclick: e => { e.preventDefault(); token = ""; try { sessionStorage.removeItem("riskmon_token"); } catch (x) {} signIn(""); } }, "sign out")] : []));
   const protect = document.getElementById("nav-protect");
   protect.replaceChildren("Protect", overview.pending ? el("span", { class: "badge", title: "waiting for your review" }, overview.pending) : "");
   document.getElementById("nav-test").hidden = !overview.test_area;
@@ -295,7 +318,8 @@ function chrome() {
 
 async function route() {
   clearInterval(timer);
-  if (!overview) { try { overview = await get("/api/overview"); } catch (e) { overview = { test_area: false, pending: 0 }; } chrome(); }
+  if (!me) { try { me = await get("/api/me"); } catch (e) { if (e.message === "signed out") return; me = { team: false, role: "admin" }; } }
+  if (!overview) { try { overview = await get("/api/overview"); } catch (e) { if (e.message === "signed out") return; overview = { test_area: false, pending: 0 }; } chrome(); }
   let hash = location.hash || "";
   if (!hash || hash === "#/") { location.replace(overview.sessions_all || !overview.test_area ? "#/protect" : "#/protect"); hash = "#/protect"; }
   const area = hash.startsWith("#/test") ? "test" : hash.startsWith("#/policy") ? "policy" : "protect";
@@ -306,9 +330,9 @@ async function route() {
       document.getElementById("test-css").disabled = false;
       await new Promise((ok, no) => { const s = el("script", { src: "/test/app.js" }); s.onload = ok; s.onerror = no; document.head.append(s); });
       testMounted = true;
-      return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true });
+      return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false });
     }
-    if (!main.querySelector(".subnav")) return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true });
+    if (!main.querySelector(".subnav")) return window.TestArea.mount(main, { base: "/test/", prefix: "#/test", header: "X-Riskmon", routed: true, token, canRun: me.test_runs !== false });
     return window.TestArea.route();
   }
   if (area === "policy") return policyView();
