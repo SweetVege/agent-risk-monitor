@@ -1,0 +1,6 @@
+# the image is built from pyproject.toml, README.md and riskmon/ alone
+*
+!pyproject.toml
+!README.md
+!riskmon
+riskmon/__pycache__

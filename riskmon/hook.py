@@ -139,6 +139,9 @@ def main() -> None:
     payload["riskmon_repo"], payload["riskmon_root"] = repo.find(str(payload.get("cwd") or os.getcwd()))
     payload["riskmon_project"] = os.environ.get("RISKMON_PROJECT", "")
     payload["riskmon_wait"] = own_wait(sys.argv)
+    # a daemon on another machine cannot know these: `~` in its policy has to mean this user's home, and the files
+    # it must keep an agent away from include this machine's copy of the monitor and its token
+    payload["riskmon_home"], payload["riskmon_monitor"] = os.path.expanduser("~"), cfg["monitor_paths"]
     try:
         resp = ask_daemon(payload, cfg["port"])
         if name == "PreToolUse":

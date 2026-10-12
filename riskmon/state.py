@@ -49,6 +49,8 @@ class SessionState:
     approved: list = field(default_factory=list)  # actions a person approved; allowed outright if they recur in this session
     project: str = ""  # the project whose policy applies, fixed when the session starts
     project_root: str = ""  # where that project is on the session's machine; its relative paths are taken from here
+    home: str = ""  # the home directory on the session's machine when it is not the daemon's, and the monitor's files there
+    monitor_paths: list = field(default_factory=list)
     repo: str = ""  # the repository the session started in, as `host/owner/name`
     resumed_by: list = field(default_factory=list)  # who lifted a suspension, most recent last
     machine: str = ""  # on a shared daemon, where the session runs and as whom

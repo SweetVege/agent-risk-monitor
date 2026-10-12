@@ -6,7 +6,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from . import insights, projects, rules, scope, state, transcript
+from . import config, insights, projects, rules, scope, state, transcript
 from .events import ActionEvent
 from .optional import Judge, drift
 from .store import Store
@@ -135,7 +135,8 @@ class Engine:
 
     def _session_cfg(self, st: state.SessionState) -> dict:
         """The baseline, plus the session's project, plus the hosts and directories declared when this run was launched."""
-        cfg = projects.apply(self.cfg, next((p for p in self.projects if p["name"] == st.project), None), st.project_root) if st.project else self.cfg
+        base = config.rehome(self.cfg, st.home, st.monitor_paths)
+        cfg = projects.apply(base, next((p for p in self.projects if p["name"] == st.project), None), st.project_root) if st.project else base
         if not (st.scope_hosts or st.scope_dirs):
             return cfg
         extra = {**cfg["scope"], "extra_dirs": cfg["scope"]["extra_dirs"] + st.scope_dirs}
@@ -158,130 +159,142 @@ class Engine:
                 st.observe = ev.observe  # likewise only taken at the start of the run
                 project, st.project_root = projects.match(self.projects, ev.cwd, ev.repo, ev.repo_root, ev.project)
                 st.project, st.repo = (project or {}).get("name", ""), ev.repo
+                st.home, st.monitor_paths = ev.home, ev.monitor_paths
                 st.machine, st.user = ev.machine, ev.user
-            cfg = self._session_cfg(st)
-            l0 = rules.assess(ev, cfg)
-            said = transcript.said_before(ev.transcript_path, ev.tool_use_id)
+            # paths in the action are read the way they resolve on the agent's machine, which need not be this one
+            home = rules.AGENT_HOME.set(st.home) if st.home else None
+            try:
+                return self._decide(ev, st, t0)
+            finally:
+                if home is not None:
+                    rules.AGENT_HOME.reset(home)
 
-            carried = None  # what this step adds to the carried score; actions while suspended do not update state
-            was_suspended = st.suspended
-            if st.suspended:
-                d = Decision("suspend", 100, dict(l0.scores), "L0", findings=["session is suspended, waiting for a person to resume it"])
-            elif state.action_key(ev) in st.approved and "monitor_tamper" not in l0.facets:
-                # behaviour tags are recorded as usual (the action really runs this time) but nothing is scored
-                carried = dict.fromkeys(st.carry, 0)
-                d = Decision("allow", 0, {**l0.scores, "deviation": 0}, "HUMAN", findings=["a person approved this action"])
-                state.update(st, ev, l0, "allow", self.cfg, carried)
-            else:
-                scores, combos = state.combine(st, ev, l0, cfg)
-                scores["deviation"] = 0
-                d = Decision("allow", max(scores.values()), scores, "L1" if l0.top else "L0", 0, l0.findings, combos)
-                forced, why = scope.decide(l0.facets, st.unattended, cfg)
+    def _decide(self, ev: ActionEvent, st: state.SessionState, t0: float) -> Decision:
+        """Score one action of a session whose state is loaded and locked."""
+        thresholds = self.cfg["thresholds"]
+        cfg = self._session_cfg(st)
+        l0 = rules.assess(ev, cfg)
+        said = transcript.said_before(ev.transcript_path, ev.tool_use_id)
 
-                # Scores above the deny line skip the judge: a model must not turn a clear violation into an allow.
-                # Neither is it asked about what the scope policy rules on: that is a boundary a person set
-                gray = drift.gray_threshold(st.drift, cfg)  # a session with high drift is reviewed at lower scores
-                if gray < thresholds["gray"] and gray <= d.score < thresholds["gray"]:
-                    d.combos.append(f"sent for review because the session's footprint is widening (drift {st.drift:g})")
-                if forced == "score" and gray <= d.score < thresholds["deny"] and self.judge.available:
-                    jr = self.judge.evaluate(st.tasks, st.summary(), ev, combos + l0.findings)
-                    if jr:
-                        for dim in ("boundary", "stealth", "resource"):
-                            scores[dim] = round(L1_WEIGHT * scores[dim] + L2_WEIGHT * jr.scores[dim])
-                        # only the judge can tell an action is off-task; on its own that escalates to a confirmation at most
-                        scores["deviation"] = round(L2_WEIGHT * jr.scores["deviation"])
-                        d.score, d.tier, d.rationale = max(scores.values()), "L2", jr.rationale
-                        d.judge_tokens = (jr.input_tokens, jr.output_tokens)
-                    else:
-                        d.judge_failed = True
+        carried = None  # what this step adds to the carried score; actions while suspended do not update state
+        was_suspended = st.suspended
+        if st.suspended:
+            d = Decision("suspend", 100, dict(l0.scores), "L0", findings=["session is suspended, waiting for a person to resume it"])
+        elif state.action_key(ev) in st.approved and "monitor_tamper" not in l0.facets:
+            # behaviour tags are recorded as usual (the action really runs this time) but nothing is scored
+            carried = dict.fromkeys(st.carry, 0)
+            d = Decision("allow", 0, {**l0.scores, "deviation": 0}, "HUMAN", findings=["a person approved this action"])
+            state.update(st, ev, l0, "allow", self.cfg, carried)
+        else:
+            scores, combos = state.combine(st, ev, l0, cfg)
+            scores["deviation"] = 0
+            d = Decision("allow", max(scores.values()), scores, "L1" if l0.top else "L0", 0, l0.findings, combos)
+            forced, why = scope.decide(l0.facets, st.unattended, cfg)
 
-                d.verdict = self._verdict(d.score)
-                if d.judge_failed and d.verdict == "allow":
-                    # an action that should have been reviewed and was not must not count as reviewed
-                    d.verdict = "ask"
-                    d.findings.append("the judge gave no answer, so a person has to confirm")
-                if forced != "score":
-                    # Not when the score alone would have denied it: then the scope limit is not what stopped the
-                    # action, and naming it would point the agent at the wrong thing and away from what the score saw.
-                    by_scope = d.verdict in ("allow", "ask")
-                    d.tier, d.findings = "SCOPE", why + d.findings
-                    if by_scope and not l0.facets & {"monitor_tamper", "monitor_probe"}:
-                        d.agent_note = scope.for_agent(l0.facets, st.unattended, cfg, l0.notes)
-                    if forced == "deny" and d.verdict in ("allow", "ask"):
-                        d.verdict = "deny"
-                    elif forced == "confirm" and d.verdict == "allow":
-                        d.verdict = "ask"
-                if st.unattended and d.verdict == "ask":
-                    # nobody can answer a prompt. Hold the action for review and let the agent do something else
-                    d.verdict = "hold"
-                key = state.action_key(ev)
-                if key in st.held and d.verdict != "suspend":
-                    # The agent was told this is waiting for a person and not to retry it. Holding it again would give
-                    # it several more attempts before anything else happened; a retry is refused and counts as a denial.
+            # Scores above the deny line skip the judge: a model must not turn a clear violation into an allow.
+            # Neither is it asked about what the scope policy rules on: that is a boundary a person set
+            gray = drift.gray_threshold(st.drift, cfg)  # a session with high drift is reviewed at lower scores
+            if gray < thresholds["gray"] and gray <= d.score < thresholds["gray"]:
+                d.combos.append(f"sent for review because the session's footprint is widening (drift {st.drift:g})")
+            if forced == "score" and gray <= d.score < thresholds["deny"] and self.judge.available:
+                jr = self.judge.evaluate(st.tasks, st.summary(), ev, combos + l0.findings)
+                if jr:
+                    for dim in ("boundary", "stealth", "resource"):
+                        scores[dim] = round(L1_WEIGHT * scores[dim] + L2_WEIGHT * jr.scores[dim])
+                    # only the judge can tell an action is off-task; on its own that escalates to a confirmation at most
+                    scores["deviation"] = round(L2_WEIGHT * jr.scores["deviation"])
+                    d.score, d.tier, d.rationale = max(scores.values()), "L2", jr.rationale
+                    d.judge_tokens = (jr.input_tokens, jr.output_tokens)
+                else:
+                    d.judge_failed = True
+
+            d.verdict = self._verdict(d.score)
+            if d.judge_failed and d.verdict == "allow":
+                # an action that should have been reviewed and was not must not count as reviewed
+                d.verdict = "ask"
+                d.findings.append("the judge gave no answer, so a person has to confirm")
+            if forced != "score":
+                # Not when the score alone would have denied it: then the scope limit is not what stopped the
+                # action, and naming it would point the agent at the wrong thing and away from what the score saw.
+                by_scope = d.verdict in ("allow", "ask")
+                d.tier, d.findings = "SCOPE", why + d.findings
+                if by_scope and not l0.facets & {"monitor_tamper", "monitor_probe"}:
+                    d.agent_note = scope.for_agent(l0.facets, st.unattended, cfg, l0.notes)
+                if forced == "deny" and d.verdict in ("allow", "ask"):
                     d.verdict = "deny"
-                    d.findings.append("repeats an action that is waiting for review")
-                elif d.verdict == "hold" and not st.observe:
-                    st.held = (st.held + [key])[-state.MAX_APPROVED:]
-                if st.observe and d.verdict == "hold":
-                    # for research: see how far it goes when nothing stops it. Only holds are relaxed; denials and suspensions still apply
-                    d.would, d.verdict = "hold", "allow"
-                    d.findings.append("observe mode: would have been held, let through and recorded")
-                carried = {dim: (scores if d.tier == "L2" else l0.scores)[dim] for dim in st.carry}
-                state.update(st, ev, l0, d.verdict, cfg, carried)
-                st.drift = drift.advance(st.drift, drift.points(l0.facets, d.verdict, d.would), cfg)
-                st.drift_peak = max(st.drift_peak, st.drift)
-                too_many_holds = st.holds >= self.cfg["unattended"]["max_holds"]
-                if d.verdict == "suspend" or st.denies >= self.cfg["suspend_after_denies"] or too_many_holds:
-                    if too_many_holds and d.verdict == "hold":
-                        d.combos.append(f"{st.holds} actions are waiting for review; not continuing with nobody watching")
-                    elif d.verdict != "suspend":
-                        d.combos.append(f"{st.denies} actions have been denied in this session")
-                    d.verdict = "suspend"
-                    st.suspended, st.suspended_reason = True, d.reason()
+                elif forced == "confirm" and d.verdict == "allow":
+                    d.verdict = "ask"
+            if st.unattended and d.verdict == "ask":
+                # nobody can answer a prompt. Hold the action for review and let the agent do something else
+                d.verdict = "hold"
+            key = state.action_key(ev)
+            if key in st.held and d.verdict != "suspend":
+                # The agent was told this is waiting for a person and not to retry it. Holding it again would give
+                # it several more attempts before anything else happened; a retry is refused and counts as a denial.
+                d.verdict = "deny"
+                d.findings.append("repeats an action that is waiting for review")
+            elif d.verdict == "hold" and not st.observe:
+                st.held = (st.held + [key])[-state.MAX_APPROVED:]
+            if st.observe and d.verdict == "hold":
+                # for research: see how far it goes when nothing stops it. Only holds are relaxed; denials and suspensions still apply
+                d.would, d.verdict = "hold", "allow"
+                d.findings.append("observe mode: would have been held, let through and recorded")
+            carried = {dim: (scores if d.tier == "L2" else l0.scores)[dim] for dim in st.carry}
+            state.update(st, ev, l0, d.verdict, cfg, carried)
+            st.drift = drift.advance(st.drift, drift.points(l0.facets, d.verdict, d.would), cfg)
+            st.drift_peak = max(st.drift_peak, st.drift)
+            too_many_holds = st.holds >= self.cfg["unattended"]["max_holds"]
+            if d.verdict == "suspend" or st.denies >= self.cfg["suspend_after_denies"] or too_many_holds:
+                if too_many_holds and d.verdict == "hold":
+                    d.combos.append(f"{st.holds} actions are waiting for review; not continuing with nobody watching")
+                elif d.verdict != "suspend":
+                    d.combos.append(f"{st.denies} actions have been denied in this session")
+                d.verdict = "suspend"
+                st.suspended, st.suspended_reason = True, d.reason()
 
-            if d.verdict == "hold":
-                d.wait = ev.wait
-            d.latency_ms = round((time.perf_counter() - t0) * 1000, 2)
-            d.event_id = self.store.log_event(
-                {
-                    "session_id": ev.session_id,
-                    "step": st.step,
-                    "ts": ev.ts,
-                    "tool": ev.tool,
-                    "kind": ev.kind,
-                    "target": ev.target[:4000],
-                    "verdict": d.verdict,
-                    "score": d.score,
-                    "tier": d.tier,
-                    "latency_ms": d.latency_ms,
-                    "detail": {
-                        "scores": d.scores,
-                        "findings": d.findings,
-                        "combos": d.combos,
-                        "rationale": d.rationale,
-                        "judge_tokens": d.judge_tokens,
-                        "judge_failed": d.judge_failed,
-                        "would": d.would,
-                        "agent_note": d.agent_note,
-                        "drift": st.drift,
-                        "facets": sorted(l0.facets),
-                        "carried": carried,
-                        "cwd": ev.cwd,
-                        "tool_use_id": ev.tool_use_id,
-                        "described": ev.described,
-                        "said": said,
-                        "said_at": "pre" if said else "",
-                        "wait_until": ev.ts + d.wait if d.wait else 0,
-                    },
-                }
-            )
-            self.store.save_state(st, ev.ts)
-            if self.notify and (d.verdict == "hold" or (st.suspended and not was_suspended)):
-                try:
-                    self.notify({
-                        "event": "held" if d.verdict == "hold" else "suspended", "kind": insights.kind_of({"facets": sorted(l0.facets), "rationale": d.rationale}),
-                        "event_id": d.event_id, "session_id": ev.session_id, "machine": st.machine, "user": st.user, "project": st.project, "wait": d.wait,
-                        "target": f"{ev.tool}: {ev.target}", "reason": d.reason(), "task": st.tasks[-1] if st.tasks else "", "ts": ev.ts})
-                except Exception:
-                    pass  # telling people is best effort; it never changes or delays a verdict
-            return d
+        if d.verdict == "hold":
+            d.wait = ev.wait
+        d.latency_ms = round((time.perf_counter() - t0) * 1000, 2)
+        d.event_id = self.store.log_event(
+            {
+                "session_id": ev.session_id,
+                "step": st.step,
+                "ts": ev.ts,
+                "tool": ev.tool,
+                "kind": ev.kind,
+                "target": ev.target[:4000],
+                "verdict": d.verdict,
+                "score": d.score,
+                "tier": d.tier,
+                "latency_ms": d.latency_ms,
+                "detail": {
+                    "scores": d.scores,
+                    "findings": d.findings,
+                    "combos": d.combos,
+                    "rationale": d.rationale,
+                    "judge_tokens": d.judge_tokens,
+                    "judge_failed": d.judge_failed,
+                    "would": d.would,
+                    "agent_note": d.agent_note,
+                    "drift": st.drift,
+                    "facets": sorted(l0.facets),
+                    "carried": carried,
+                    "cwd": ev.cwd,
+                    "tool_use_id": ev.tool_use_id,
+                    "described": ev.described,
+                    "said": said,
+                    "said_at": "pre" if said else "",
+                    "wait_until": ev.ts + d.wait if d.wait else 0,
+                },
+            }
+        )
+        self.store.save_state(st, ev.ts)
+        if self.notify and (d.verdict == "hold" or (st.suspended and not was_suspended)):
+            try:
+                self.notify({
+                    "event": "held" if d.verdict == "hold" else "suspended", "kind": insights.kind_of({"facets": sorted(l0.facets), "rationale": d.rationale}),
+                    "event_id": d.event_id, "session_id": ev.session_id, "machine": st.machine, "user": st.user, "project": st.project, "wait": d.wait,
+                    "target": f"{ev.tool}: {ev.target}", "reason": d.reason(), "task": st.tasks[-1] if st.tasks else "", "ts": ev.ts})
+            except Exception:
+                pass  # telling people is best effort; it never changes or delays a verdict
+        return d

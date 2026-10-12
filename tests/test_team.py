@@ -138,5 +138,49 @@ class JoiningTest(unittest.TestCase):
                 self.assertEqual(hook.client(), {"server": "http://other:1", "token": "rmm_y"})
 
 
+class AnotherMachinesHomeTest(unittest.TestCase):
+    """The daemon's policy says `~/.ssh`. On the machine an agent runs on, that is not the daemon's home directory."""
+
+    def setUp(self):
+        self.engine = Engine(config.load(), judge=NoJudge())
+        self.addCleanup(self.engine.store.close)
+
+    def act(self, command, session="s1", home="/Users/dev", monitor=("/Users/dev/.riskmon", "/opt/tools/riskmon")):
+        from riskmon.events import from_claude_code
+
+        return self.engine.evaluate(from_claude_code({
+            "hook_event_name": "PreToolUse", "session_id": session, "cwd": "/Users/dev/work/app", "tool_name": "Bash", "tool_input": {"command": command},
+            "riskmon_mode": "unattended", "riskmon_machine": "laptop-7", "riskmon_home": home, "riskmon_monitor": list(monitor)}))
+
+    def test_protected_paths_are_the_ones_on_the_agent_s_machine(self):
+        self.assertNotEqual(os.path.expanduser("~"), "/Users/dev")
+        for command in ("cat ~/.ssh/id_rsa", "cat /Users/dev/.ssh/id_rsa", "cat $HOME/.aws/credentials"):
+            d = self.act(command)
+            self.assertEqual(d.verdict, "hold", command)
+            self.assertIn("protected path", d.reason())
+        self.assertEqual(self.act("ls src").verdict, "allow")
+
+    def test_that_machine_s_token_and_copy_of_the_monitor_are_off_limits(self):
+        for n, command in enumerate(("cat ~/.riskmon/client.json", "sed -i s/a/b/ /opt/tools/riskmon/hook.py")):
+            d = self.act(command, session=f"t{n}")
+            self.assertIn(d.verdict, ("deny", "suspend"), command)
+            self.assertIn("monitor itself", d.reason())
+
+    def test_without_a_reported_home_nothing_changes(self):
+        d = self.act("cat ~/.ssh/id_rsa", home="", monitor=())
+        self.assertEqual(d.verdict, "hold")
+        self.assertEqual(self.engine.store.sessions()[0].get("home", ""), "")
+
+    def test_what_a_machine_reports_is_checked_before_it_is_used(self):
+        from riskmon.events import from_claude_code
+
+        ev = from_claude_code({"hook_event_name": "PreToolUse", "session_id": "x", "cwd": "/w", "tool_name": "Bash", "tool_input": {"command": "ls"},
+                               "riskmon_home": "relative/home", "riskmon_monitor": ["/", "not/absolute", 7, "/ok/path"] + ["/p%d" % i for i in range(20)]})
+        self.assertEqual(ev.home, "")
+        self.assertLessEqual(len(ev.monitor_paths), 6)
+        self.assertNotIn("/", ev.monitor_paths)
+        self.assertIn("/ok/path", ev.monitor_paths)
+
+
 if __name__ == "__main__":
     unittest.main()

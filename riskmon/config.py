@@ -45,6 +45,24 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+def rehome(cfg: dict, home: str, monitor_paths: list | None = None) -> dict:
+    """The policy as it applies on another machine: `~` means `home` there, and the monitor's own files there are protected too.
+
+    A daemon serving other machines loads its policy once, with `~` taken as its own home. An agent's `~/.ssh` is
+    somewhere else, and so is that machine's copy of the monitor and the token it joined with.
+    """
+    was = cfg.get("home", "")
+    if not home or not was or (home == was and not monitor_paths):
+        return cfg
+
+    def move(p: str) -> str:
+        return home + p[len(was):] if home != was and (p == was or p.startswith(was.rstrip("/") + "/")) else p
+
+    scope = {**cfg["scope"], "extra_dirs": [move(p) for p in cfg["scope"]["extra_dirs"]]}
+    return {**cfg, "home": home, "protected_paths": [move(p) for p in cfg["protected_paths"]], "scope": scope,
+            "monitor_paths": sorted({*cfg["monitor_paths"], *(monitor_paths or [])})}
+
+
 def load(path: str | os.PathLike | None = None, agent_home: str | None = None) -> dict:
     """The default policy plus the changes in `path` (default: policy.json in the home directory, which may not exist).
 
@@ -58,6 +76,7 @@ def load(path: str | os.PathLike | None = None, agent_home: str | None = None) -
     def expand(x: str) -> str:
         return agent_home + x[1:] if agent_home and (x == "~" or x.startswith("~/")) else os.path.expanduser(x)
 
+    cfg["home"] = agent_home or os.path.expanduser("~")  # what `~` was taken to mean; see rehome
     cfg["protected_paths"] = [expand(x) for x in cfg["protected_paths"]]
     cfg["scope"]["extra_dirs"] = [expand(x) for x in cfg["scope"]["extra_dirs"]]
     # where the monitor's own code, policy and audit data live; the self-protection rules need these

@@ -1,0 +1,59 @@
+# The shared daemon, for a team. Read deploy/README.md first: the daemon will not start until it has an administrator.
+#
+#     docker compose -f deploy/compose.yaml run --rm monitor team add-member <name> --role admin
+#     docker compose -f deploy/compose.yaml up -d                   # behind your own TLS proxy
+#     docker compose -f deploy/compose.yaml --profile tls up -d     # or with the bundled proxy, which gets a certificate itself
+name: riskmon
+
+services:
+  monitor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: riskmon:local
+    restart: unless-stopped
+    volumes:
+      - data:/data
+    # Plain HTTP, published on this host's loopback address only. Tokens must not cross a network unencrypted, so
+    # other machines reach the daemon through something that terminates TLS: the proxy below, or one you already run.
+    ports:
+      - "127.0.0.1:${RISKMON_PORT:-8787}:8787"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: HTTPS in front of the daemon, with a certificate obtained and renewed automatically.
+  # Needs RISKMON_DOMAIN to resolve to this host and ports 80 and 443 to be reachable for the certificate's issuer.
+  proxy:
+    profiles: ["tls"]
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - monitor
+    ports:
+      - "${RISKMON_HTTP_PORT:-80}:80"
+      - "${RISKMON_HTTPS_PORT:-443}:443"
+    volumes:
+      - proxy-data:/data
+      - proxy-config:/config
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+
+configs:
+  caddyfile:
+    # RISKMON_DOMAIN is the name machines and reviewers will use. Left unset, the proxy serves localhost only,
+    # with a certificate of its own making, which is good for trying it out and nothing else.
+    content: |
+      ${RISKMON_DOMAIN:-localhost} {
+      	reverse_proxy monitor:8787
+      }
+
+volumes:
+  data:
+  proxy-data:
+  proxy-config:

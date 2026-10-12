@@ -34,6 +34,8 @@ class ActionEvent:
     repo: str = ""  # the repository the session's directory belongs to, as `host/owner/name`, and where it is checked out
     repo_root: str = ""
     project: str = ""  # a project named by whoever launched the run, in place of matching one
+    home: str = ""  # the home directory on the machine the agent runs on, and where the monitor's own files are there
+    monitor_paths: list = field(default_factory=list)
     wait: int = 0  # seconds the hook on that machine will pause the run for a reviewer if this action is held
 
 
@@ -84,6 +86,8 @@ def from_claude_code(payload: dict) -> ActionEvent:
     else:
         target = json.dumps(inp, ensure_ascii=False, sort_keys=True)
 
+    home = os.path.normpath(str(payload.get("riskmon_home") or ""))[:400]
+    monitor = payload.get("riskmon_monitor") if isinstance(payload.get("riskmon_monitor"), list) else []
     scope = payload.get("riskmon_scope")
     scope = scope if isinstance(scope, dict) else {}
     return ActionEvent(
@@ -105,5 +109,7 @@ def from_claude_code(payload: dict) -> ActionEvent:
         repo=str(payload.get("riskmon_repo", ""))[:300],
         repo_root=str(payload.get("riskmon_root", ""))[:1000],
         project=str(payload.get("riskmon_project", ""))[:80],
+        home=home if os.path.isabs(home) and len(home) > 1 else "",
+        monitor_paths=[os.path.normpath(p) for p in monitor[:6] if isinstance(p, str) and os.path.isabs(p) and len(os.path.normpath(p)) > 1][:6],
         wait=max(0, min(int(payload["riskmon_wait"]), 3600)) if isinstance(payload.get("riskmon_wait"), int) else 0,
     )

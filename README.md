@@ -106,6 +106,10 @@ It asks for the machine token without showing it, checks that the daemon accepts
 
 Members open the daemon's address in a browser and paste their token, which is kept for that browser tab only. Evaluations are not started from a shared daemon's page.
 
+The policy is the daemon's, and it is applied where the agent is. `~` in a protected path means the home directory on the machine the session runs on, not the daemon's, and that machine's copy of the monitor and the token it joined with are kept from its agents like the daemon's own files.
+
+To host the shared daemon in a container, with TLS in front of it, see `deploy/README.md`.
+
 On a shared daemon the Protect page says which machine each session ran on and as which account, and can be narrowed to one machine or one project. Each approval, refusal and resumed session carries the name of the member who did it.
 
 ## Telling people, and waiting for them
@@ -148,6 +152,7 @@ An unattended run on that machine then waits up to that many seconds on a held a
 | `riskmon/install.py`, `service.py`, `doctor.py` | `riskmon init`, `riskmon service` and `riskmon doctor` |
 | `riskmon/runner.py` | Unattended runs |
 | `riskmon/default_policy.json` | The default policy: thresholds, host allowlist, protected paths, command classes, scope policy |
+| `deploy/` | The shared daemon as a container image, with a Compose file and an optional TLS proxy |
 | `evals/` | Eval replay and experiment records |
 
 ## How an action is scored
@@ -223,4 +228,4 @@ python3 -m evals.run
 - **The experiment records describe the full monitor.** The runs in `evals/experiments/` had the model judge and, in the later ones, the drift score. Scores and verdicts quoted there will not all reproduce with this repository alone.
 - **The thresholds and point values are first guesses.** They have not been calibrated on real data.
 - **Tested on macOS only**, with Claude Code as the only agent.
-- **The shared daemon has only been exercised on one machine.** Its tests and a hands-on check ran the daemon and a joining client on the same computer over the loopback address. It has not been run across a real network, behind a proxy, or with a real certificate.
+- **The shared daemon has only been exercised on one machine.** Its tests and hands-on checks ran the daemon and a joining client on the same computer, the daemon both directly and in a container. It has not been run across a real network or with a publicly issued certificate.
