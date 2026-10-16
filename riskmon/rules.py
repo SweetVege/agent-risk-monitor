@@ -249,15 +249,35 @@ def _read_only_roots(cwd: str, cfg: dict) -> list[str]:
 
 
 def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[str]:
-    """Paths the policy declares read-only that this command may change.
+    """Paths the policy declares read-only that this command may change."""
+    roots = _read_only_roots(cwd, cfg)
+    return _changes(command, progs, cwd, cfg, lambda q: _under(q, roots)) if roots else []
+
+
+# besides those that leave a path alone, these only look a path up or read it, wherever it is
+_LOOKS_ONLY = {"printf", "which", "type", "command", "realpath", "readlink", "basename", "dirname", "source", ".", "ldd", "otool", "strings", "hexdump"}
+
+
+def _outside_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[str]:
+    """Paths outside the workspace that this command may change.
+
+    The workspace, the directories the policy or the run adds, temporary directories and /dev are inside for
+    this purpose. The monitor's own files are left to the heavier rules about them.
+    """
+    if not cwd:
+        return []
+    inside = [cwd, *cfg["scope"]["extra_dirs"], *cfg["temp_dirs"], "/dev", *cfg["monitor_paths"]]
+    return _changes(command, progs, cwd, cfg, lambda q: not _under(q, inside), _LOOKS_ONLY, absolute_only=True)
+
+
+def _changes(command: str, progs: list, cwd: str, cfg: dict, counts, also_reads: set = frozenset(), absolute_only: bool = False) -> list[str]:
+    """Paths for which `counts(path)` is true that this command may change.
 
     A program that is handed such a path and is not known to leave it alone counts, as does a
     redirection into one. When the path's name appears only inside inline code or a quoted script,
-    nothing can be said about what is done to it, and that counts too.
+    nothing can be said about what is done to it, and that counts too. `absolute_only` limits that
+    last case to names written as absolute or home-relative paths.
     """
-    roots = _read_only_roots(cwd, cfg)
-    if not roots:
-        return []
 
     def resolve(arg: str, base: str) -> str:
         raw = _expand(arg)
@@ -275,12 +295,14 @@ def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[st
         if name == "cd":
             here = resolve(args[0], here) if args and not args[0].startswith("-") else _home()
             continue
-        paths = [resolve(a.split("=", 1)[1] if a.startswith("-") and "=" in a else a, here) for a in args if not a.startswith("-") or "=" in a]
-        inside = [q for q in paths if _under(q, roots)]
+        paths = [resolve(a.split("=", 1)[1] if a.startswith("-") and "=" in a else a, here) for a in args if (not a.startswith("-") or "=" in a) and "://" not in a]
+        inside = [q for q in paths if counts(q)]
         if not inside:
             continue
         seen = True
-        reads = name in _LEAVES_ALONE or (name == "git" and args and args[0] in _GIT_READS)
+        # git's subcommand comes after its own options: `git -C ../other status` only reads
+        sub = [a for i, a in enumerate(args) if not a.startswith("-") and (i == 0 or args[i - 1] not in ("-C", "-c", "--git-dir", "--work-tree"))] if name == "git" else []
+        reads = name in _LEAVES_ALONE or name in also_reads or (name == "git" and sub[:1] and sub[0] in _GIT_READS)
         if name in ("sed", "sort") and any(_IN_PLACE.match(a) or a == "-o" for a in args):
             reads = False
         if name == "find":
@@ -293,7 +315,7 @@ def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[st
     body = _HEREDOC.sub("", command)
     for m in _REDIRECT_TARGET.finditer(body):
         q = resolve(m.group(2), after_cd(_programs(body[: m.start()])[0]))  # against the directory of the last cd before it
-        if _under(q, roots):
+        if counts(q):
             seen = True
             hit.append(q)
     if not hit and not seen:
@@ -304,8 +326,10 @@ def _read_only_writes(command: str, progs: list, cwd: str, cfg: dict) -> list[st
         if feeds and _WRITES_IN_CODE.search(command):
             # one pass per kind of quote: a -c argument is quoted one way and the paths inside it the other
             for literal in re.findall(r"'([^'\n]{1,300})'", command) + re.findall(r'"([^"\n]{1,300})"', command):
+                if absolute_only and not literal.startswith(("/", "~")):
+                    continue
                 q = resolve(literal, here)
-                if _under(q, roots) and ("/" in literal or "." in os.path.basename(literal)):
+                if counts(q) and ("/" in literal or "." in os.path.basename(literal)):
                     hit.append(q)
     return sorted(set(hit))
 
@@ -427,6 +451,9 @@ def _assess_shell(ev: ActionEvent, cfg: dict, res: L0Result) -> None:
 
     for path in _read_only_writes(ev.target, progs, ev.cwd, cfg):
         res.hit("boundary", 60, "readonly_write", f"command may change {path}, which is declared read-only")
+    for path in _outside_writes(ev.target, progs, ev.cwd, cfg):
+        res.hit("boundary", 30, "outside_write", f"command may change {path}, outside the workspace")
+        res.outside.append(_region(path))
 
     # widening scope: the command reaches outside the workspace. File tools always had their paths checked; paths in commands did not
     if ev.cwd:

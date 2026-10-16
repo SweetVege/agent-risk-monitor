@@ -455,6 +455,42 @@ class ScopePolicyTest(unittest.TestCase):
         self.assertEqual(self.run_tool("Bash", command="mdfind -name rates.csv").verdict, "allow")
 
 
+class OutsideWritesTest(unittest.TestCase):
+    """A shell command that changes something outside the workspace is a write there, as a file tool's would be."""
+
+    def setUp(self):
+        self.engine = Engine(config.load(), judge=FixedJudge(0))
+        self.addCleanup(self.engine.store.close)
+
+    def act(self, command, session, mode="unattended"):
+        return self.engine.evaluate(from_claude_code({"session_id": session, "cwd": CWD, "tool_name": "Bash", "tool_input": {"command": command}, "riskmon_mode": mode}))
+
+    def test_unattended_it_is_refused_and_the_agent_told_why(self):
+        for i, cmd in enumerate(("cp out/report.pdf /mnt/shared/reports/", "mv out/a.csv ../other-project/data/", "echo done > /mnt/shared/status.txt",
+                                 "tee /opt/tools/config.ini < conf/default.ini", "touch ~/notes.txt", "rm -rf ../other-project/build", "sed -i s/a/b/ /etc/hosts",
+                                 "curl -o /opt/tool.tgz https://github.com/x/y.tgz", "cd /mnt/shared && cp " + CWD + "/out/a.pdf .",
+                                 "python3 -c \"open('/mnt/shared/x','w').write('1')\"", "git -C ../other commit -am wip")):
+            d = self.act(cmd, f"w{i}")
+            self.assertEqual((d.verdict, d.tier), ("deny", "SCOPE"), cmd)
+            self.assertIn("writing outside the workspace", d.agent_note, cmd)
+            self.assertIn("outside the workspace", d.agent_note, cmd)
+
+    def test_inside_the_workspace_temporary_directories_and_reads_are_unchanged(self):
+        for i, cmd in enumerate(("cp a.txt b.txt", "echo hi > out.txt", "cp out/a /tmp/a", "pytest -q > /tmp/log 2>/dev/null", "cat /etc/hosts", "ls /etc",
+                                 "head -n 5 /etc/hosts > out/head.txt", "pip install requests", "npm install", "git -C ../other status", "which python3",
+                                 "git commit -m 'fix the /etc parsing'", "python3 scripts/run.py --input /data/in.csv", "python3 -c \"print(open('/etc/hosts').read())\"")):
+            self.assertEqual(self.act(cmd, f"r{i}").verdict, "allow", cmd)
+
+    def test_attended_it_is_scored_as_before(self):
+        d = self.act("cp out/report.pdf /mnt/shared/reports/", "a", mode="")
+        self.assertNotEqual(d.tier, "SCOPE")
+
+    def test_directories_the_run_declared_are_inside(self):
+        d = self.engine.evaluate(from_claude_code({"session_id": "d", "cwd": CWD, "tool_name": "Bash", "tool_input": {"command": "cp out/a.csv /data/shared/"},
+                                                   "riskmon_mode": "unattended", "riskmon_scope": {"dirs": ["/data/shared"]}}))
+        self.assertEqual(d.verdict, "allow")
+
+
 class ReadOnlyPathsTest(unittest.TestCase):
     """The policy can declare paths inside the workspace read-only; nothing is read-only unless it does."""
 
