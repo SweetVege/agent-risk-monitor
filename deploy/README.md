@@ -1,6 +1,6 @@
 # Running the shared daemon in a container
 
-For a team: one daemon that machines running agents send their actions to, and that reviewers open in a browser. The main README's "One daemon for a team" explains the two kinds of token; this is how to host it.
+For a team: one daemon that machines running agents send their actions to, and that reviewers open in a browser. [Running it for a team](../guide/team.md) explains the two kinds of token; this is how to host it.
 
 You need Docker with Compose. Commands are run from the repository's root.
 
